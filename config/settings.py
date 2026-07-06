@@ -188,7 +188,7 @@ PARALLEL_CONFIG = {
 # Neo4j 知识图谱配置（新增）
 # ============================================================
 NEO4J_CONFIG = {
-    "enabled": False,                         # 是否启用（默认关闭，需安装 Neo4j）
+    "enabled": True,                          # 是否启用（需要本地 Neo4j 服务）
     "uri": "bolt://localhost:7687",
     "user": "neo4j",
     "password": "password",
