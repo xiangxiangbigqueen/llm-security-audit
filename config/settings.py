@@ -157,7 +157,150 @@ VULN_CATEGORIES = {
             r"""file_get_contents\s*\(\s*\$url""",
         ],
         "risk_description": "攻击者可利用SSRF攻击内网服务，访问云原数据接口等敏感资源"
-    }
+    },
+    # ============================================================
+    # 10 种新增漏洞类型（扩展覆盖面）
+    # ============================================================
+    "xxe": {
+        "name": "XML外部实体注入 (XXE)",
+        "severity": "高危",
+        "cwe": "CWE-611",
+        "patterns": [
+            r"""SAXParser\.parse\s*\(""",
+            r"""DocumentBuilderFactory""",
+            r"""SimpleXML\s*\(\s*file_get_contents""",
+            r"""loadXML\s*\(""",
+            r"""XMLReader""",
+            r"""libxml_disable_entity_loader\s*\(\s*false""",
+            r"""DOMDocument::load""",
+        ],
+        "risk_description": "攻击者可通过恶意XML实体引用读取服务器文件、执行SSRF攻击或导致拒绝服务"
+    },
+    "csrf": {
+        "name": "跨站请求伪造 (CSRF)",
+        "severity": "中危",
+        "cwe": "CWE-352",
+        "patterns": [
+            r"""@csrf_exempt""",
+            r"""csrf_exempt""",
+            r"""csrf\.exempt""",
+            r"""without_csrf""",
+            r"""#csrf""",
+            r"""skip_csrf""",
+        ],
+        "risk_description": "攻击者可伪造用户请求执行非授权操作，如修改密码、转账等敏感操作"
+    },
+    "open_redirect": {
+        "name": "开放重定向",
+        "severity": "中危",
+        "cwe": "CWE-601",
+        "patterns": [
+            r"""redirect\s*\(\s*request\.args""",
+            r"""redirect\s*\(\s*\$_GET""",
+            r"""redirect\s*\(\s*req\.param""",
+            r"""redirect\s*\(\s*\.\./\.""",
+            r"""Location:\s*['""][^'""]*\${""",
+            r"""header\s*\(\s*['""]Location:['""]\s*\.\s*\$""",
+        ],
+        "risk_description": "攻击者可利用未经验证的重定向将用户引导至钓鱼网站"
+    },
+    "ldap_injection": {
+        "name": "LDAP注入",
+        "severity": "高危",
+        "cwe": "CWE-90",
+        "patterns": [
+            r"""ldap_search\s*\(""",
+            r"""ldap_list\s*\(""",
+            r"""ldap_read\s*\(""",
+            r"""DirContext\.search""",
+            r"""LdapTemplate""",
+            r"""initialLdapContext""",
+        ],
+        "risk_description": "攻击者可篡改LDAP查询语句，绕过认证或获取未授权数据"
+    },
+    "nosql_injection": {
+        "name": "NoSQL注入",
+        "severity": "高危",
+        "cwe": "CWE-943",
+        "patterns": [
+            r"""db\.\w+\.find\s*\(\s*\{[^}]*\$\w+""",
+            r"""mongo_client.*find\s*\(\s*["']""",
+            r"""\$where.*\$\w+""",
+            r"""db\.\w+\.aggregate\s*\(\s*\{[^}]*\$""",
+            r"""collection\.find\s*\(\s*["']""",
+        ],
+        "risk_description": "攻击者可通过注入NoSQL操作符绕过认证或获取非授权数据"
+    },
+    "ssti": {
+        "name": "服务端模板注入 (SSTI)",
+        "severity": "高危",
+        "cwe": "CWE-1336",
+        "patterns": [
+            r"""render_template_string\s*\(""",
+            r"""render_to_string""",
+            r"""\.render\s*\(\s*request\.args""",
+            r"""Template\s*\(\s*["'][^"']*\${""",
+            r"""template\.replace""",
+            r"""eval\(.*template""",
+            r"""compile\(.*template""",
+        ],
+        "risk_description": "攻击者可通过注入模板表达式执行任意代码或读取敏感数据"
+    },
+    "insecure_upload": {
+        "name": "不安全文件上传",
+        "severity": "高危",
+        "cwe": "CWE-434",
+        "patterns": [
+            r"""request\.files""",
+            r"""$_FILES""",
+            r"""upload\(""",
+            r"""\.save\s*\(\s*["'][^"']*\.[^"']*["']\s*\)""",
+            r"""move_uploaded_file""",
+            r"""file_put_contents.*$_FILES""",
+            r"""open\(.*filename.*['""][^'""]*\.\w+['""]""",
+        ],
+        "risk_description": "攻击者可上传恶意文件（WebShell、恶意脚本）导致服务器被控制"
+    },
+    "jwt_vuln": {
+        "name": "JWT安全漏洞",
+        "severity": "高危",
+        "cwe": "CWE-347",
+        "patterns": [
+            r"""jwt\.decode.*verify=False""",
+            r"""jwt\.decode.*None""",
+            r"""algorithm=['""]none['""]""",
+            r"""algorithms.*None""",
+            r"""JWT_ALGORITHM.*['""]none['""]""",
+            r"""jwt\.encode.*secret.*None""",
+        ],
+        "risk_description": "攻击者可利用JWT算法混淆、空签名或密钥泄露伪造身份令牌"
+    },
+    "log_forging": {
+        "name": "日志伪造",
+        "severity": "中危",
+        "cwe": "CWE-117",
+        "patterns": [
+            r"""logging\.(info|warning|error|debug)\s*\(\s*[^"']*%s.*request""",
+            r"""log\.(info|warn|error).*request\.args""",
+            r"""\$_SERVER\['REQUEST_URI'\]""",
+            r"""print\(.*request""",
+            r"""console\.log.*req\.body""",
+        ],
+        "risk_description": "攻击者可通过注入换行符伪造日志条目，掩盖攻击痕迹或误导安全分析"
+    },
+    "crlf_injection": {
+        "name": "CRLF注入/HTTP响应拆分",
+        "severity": "高危",
+        "cwe": "CWE-93",
+        "patterns": [
+            r"""header\s*\(\s*["'][^"']*%0[dDaA]""",
+            r"""response\.headers\.add\s*\(\s*["'][^"']*\\r\\n""",
+            r"""%0[dDaA].*%0[aA]""",
+            r"""\\\\r\\\\n.*header""",
+            r"""add_header.*%0""",
+        ],
+        "risk_description": "攻击者可通过注入CRLF序列实现HTTP响应拆分、缓存投毒或XSS攻击"
+    },
 }
 
 # ============================================================
