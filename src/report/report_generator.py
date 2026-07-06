@@ -328,116 +328,209 @@ class ReportGenerator:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安全审计报告 - {project_name}</title>
+    <title>Security Audit Report - {project_name}</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: -apple-system, 'Microsoft YaHei', 'Segoe UI', sans-serif; background: #0f0f23; color: #e0e0e0; }}
-        .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
+        .container {{ max-width: 1300px; margin: 0 auto; padding: 20px; }}
+
+        /* Navigation */
+        .nav {{ position: sticky; top: 0; z-index: 100; background: #1a1a3e; border-bottom: 1px solid #2a2a4a; padding: 8px 20px; margin: -20px -20px 20px; display: flex; gap: 8px; flex-wrap: wrap; }}
+        .nav a {{ color: #888; text-decoration: none; font-size: 12px; padding: 6px 12px; border-radius: 4px; }}
+        .nav a:hover {{ color: #00d4ff; background: #2a2a4a; }}
+        .nav .badge {{ display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; margin-left: 4px; }}
 
         /* Header */
         .header {{ background: linear-gradient(135deg, #1a1a2e, #16213e); border: 1px solid #2a2a4a; border-radius: 16px; padding: 30px 40px; margin-bottom: 24px; }}
         .header h1 {{ font-size: 28px; background: linear-gradient(135deg, #00d4ff, #7b2ff7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
-        .header .meta {{ margin-top: 12px; font-size: 13px; color: #888; }}
-        .header .meta span {{ display: inline-block; margin-right: 24px; }}
+        .header .meta {{ margin-top: 12px; font-size: 13px; color: #888; display: flex; flex-wrap: wrap; gap: 16px; }}
+
+        /* Risk Score */
+        .risk-meter {{ display: flex; align-items: center; gap: 16px; padding: 16px; border-radius: 10px; margin-bottom: 16px; background: #0f0f23; border: 1px solid #2a2a4a; }}
+        .risk-score {{ font-size: 48px; font-weight: bold; line-height: 1; }}
+        .risk-score.critical {{ color: #dc3545; }}
+        .risk-score.high {{ color: #fd7e14; }}
+        .risk-score.medium {{ color: #ffc107; }}
+        .risk-score.low {{ color: #28a745; }}
+        .risk-detail {{ font-size: 13px; color: #aaa; }}
+        .risk-bar {{ flex: 1; height: 8px; border-radius: 4px; background: #2a2a4a; overflow: hidden; }}
+        .risk-bar-fill {{ height: 100%; border-radius: 4px; transition: width 1s; }}
 
         /* Cards */
         .card {{ background: #1a1a3e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 24px; margin-bottom: 16px; }}
         .card h2 {{ font-size: 18px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #2a2a4a; color: #00d4ff; }}
+        .card h3 {{ font-size: 15px; margin: 16px 0 8px; color: #e0e0e0; }}
 
-        /* Summary stats */
-        .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }}
-        .stat-card {{ text-align: center; padding: 16px; border-radius: 10px; }}
+        /* Summary Grid */
+        .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }}
+        .stat-card {{ text-align: center; padding: 16px 10px; border-radius: 10px; }}
         .stat-card.critical {{ background: rgba(220,53,69,0.15); border: 1px solid rgba(220,53,69,0.3); }}
         .stat-card.high {{ background: rgba(253,126,20,0.15); border: 1px solid rgba(253,126,20,0.3); }}
         .stat-card.medium {{ background: rgba(255,193,7,0.15); border: 1px solid rgba(255,193,7,0.3); }}
         .stat-card.low {{ background: rgba(40,167,69,0.15); border: 1px solid rgba(40,167,69,0.3); }}
         .stat-card.info {{ background: rgba(13,110,253,0.15); border: 1px solid rgba(13,110,253,0.3); }}
-        .stat-number {{ font-size: 36px; font-weight: bold; }}
+        .stat-card.total {{ background: rgba(108,117,125,0.15); border: 1px solid rgba(108,117,125,0.3); }}
+        .stat-number {{ font-size: 32px; font-weight: bold; }}
         .stat-card.critical .stat-number {{ color: #dc3545; }}
         .stat-card.high .stat-number {{ color: #fd7e14; }}
         .stat-card.medium .stat-number {{ color: #ffc107; }}
         .stat-card.low .stat-number {{ color: #28a745; }}
         .stat-card.info .stat-number {{ color: #0d6efd; }}
-        .stat-label {{ font-size: 12px; color: #888; margin-top: 4px; }}
+        .stat-card.total .stat-number {{ color: #6c757d; }}
+        .stat-label {{ font-size: 11px; color: #888; margin-top: 4px; }}
 
-        /* Project info table */
-        .info-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-        .info-table td {{ padding: 6px 12px; border-bottom: 1px solid #2a2a4a; }}
-        .info-table td:first-child {{ color: #888; width: 120px; }}
+        /* Info Table */
+        .info-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; font-size: 13px; }}
+        .info-grid .label {{ color: #888; }}
+        .info-grid .value {{ color: #e0e0e0; }}
+        .info-row {{ display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #2a2a4a; }}
 
-        /* Findings */
-        .finding {{ border: 1px solid #2a2a4a; border-left: 4px solid #555; padding: 20px; margin-bottom: 16px; border-radius: 0 10px 10px 0; background: #0f0f23; }}
-        .finding.critical {{ border-left-color: #dc3545; }}
-        .finding.high {{ border-left-color: #fd7e14; }}
-        .finding.medium {{ border-left-color: #ffc107; }}
-        .finding.low {{ border-left-color: #28a745; }}
-        .finding-header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }}
-        .finding-title {{ font-size: 16px; font-weight: 600; }}
-        .finding-file {{ font-family: 'Courier New', monospace; font-size: 12px; color: #888; margin-top: 4px; }}
+        /* Tables */
+        table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+        th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #2a2a4a; }}
+        th {{ color: #888; font-weight: 600; font-size: 11px; text-transform: uppercase; cursor: pointer; }}
+        th:hover {{ color: #00d4ff; }}
+        tr:hover {{ background: rgba(255,255,255,0.02); }}
 
         /* Tags */
-        .tag {{ display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
+        .tag {{ display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
         .tag.critical {{ background: #dc3545; color: white; }}
         .tag.high {{ background: #fd7e14; color: white; }}
         .tag.medium {{ background: #ffc107; color: #333; }}
         .tag.low {{ background: #28a745; color: white; }}
         .tag.cwe {{ background: #6f42c1; color: white; }}
-        .tag.scope {{ background: #2a2a4a; color: #aaa; }}
+        .tag.info {{ background: #2a2a4a; color: #aaa; }}
 
-        /* Code */
-        pre, code {{ font-family: 'Courier New', monospace; }}
-        .code-block {{ background: #0a0a1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 12px; margin-top: 8px; }}
-        .code-block .line-num {{ color: #555; user-select: none; margin-right: 12px; }}
-        .code-block .highlight {{ background: rgba(220,53,69,0.2); border-left: 3px solid #dc3545; padding-left: 8px; }}
+        /* Findings */
+        .finding {{ border: 1px solid #2a2a4a; border-left: 4px solid #555; margin-bottom: 12px; border-radius: 0 10px 10px 0; background: #0f0f23; }}
+        .finding-header {{ display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; cursor: pointer; }}
+        .finding-header:hover {{ background: rgba(255,255,255,0.02); }}
+        .finding.critical {{ border-left-color: #dc3545; }}
+        .finding.high {{ border-left-color: #fd7e14; }}
+        .finding.medium {{ border-left-color: #ffc107; }}
+        .finding.low {{ border-left-color: #28a745; }}
+        .finding-title {{ font-size: 14px; font-weight: 600; }}
+        .finding-file {{ font-family: 'Courier New', monospace; font-size: 11px; color: #666; margin-left: 8px; }}
+        .finding-body {{ padding: 0 16px 16px; display: none; }}
+        .finding-body.open {{ display: block; }}
 
-        /* Evidence Chain */
-        .evidence {{ background: #0a0a1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 16px; margin-top: 12px; }}
-        .evidence h4 {{ color: #00d4ff; font-size: 14px; margin-bottom: 8px; }}
-        .evidence-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
-        .evidence-item {{ padding: 8px; border-radius: 6px; background: #1a1a3e; font-size: 12px; }}
-        .evidence-item .label {{ color: #888; }}
-        .evidence-item .value {{ color: #e0e0e0; }}
+        /* Code block */
+        .code-block {{ background: #0a0a1a; border: 1px solid #2a2a4a; border-radius: 8px; overflow: hidden; margin-top: 8px; }}
+        .code-block .code-header {{ padding: 6px 12px; background: #1a1a3e; font-size: 11px; color: #888; border-bottom: 1px solid #2a2a4a; }}
+        .code-block pre {{ padding: 12px; overflow-x: auto; font-size: 12px; line-height: 1.5; font-family: 'Courier New', monospace; margin: 0; }}
+        .code-block .hl {{ background: rgba(220,53,69,0.15); display: block; }}
 
-        /* Status indicators */
-        .status {{ display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 11px; }}
-        .status.ok {{ background: rgba(40,167,69,0.2); color: #28a745; }}
-        .status.warn {{ background: rgba(255,193,7,0.2); color: #ffc107; }}
+        /* Evidence */
+        .evidence {{ background: #0a0a1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 12px; margin-top: 8px; }}
+        .evidence-grid {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }}
+        .ev-item {{ padding: 8px; border-radius: 6px; background: #1a1a3e; font-size: 12px; }}
+        .ev-item .ev-label {{ color: #888; font-size: 11px; }}
+        .ev-item .ev-value {{ color: #e0e0e0; font-weight: 600; }}
+        .path-step {{ padding: 3px 0; font-size: 12px; border-left: 2px solid #2a2a4a; padding-left: 10px; margin: 2px 0; }}
+        .path-step:hover {{ border-left-color: #00d4ff; background: rgba(0,212,255,0.05); }}
 
-        /* Charts */
-        .chart-container {{ height: 250px; margin: 16px 0; }}
+        /* Flow chart */
+        .flow {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px; background: #1a1a3e; border-radius: 8px; margin-top: 8px; font-size: 12px; }}
+        .flow-node {{ padding: 4px 10px; border-radius: 4px; background: #2a2a4a; }}
+        .flow-node.source {{ background: rgba(220,53,69,0.2); border: 1px solid rgba(220,53,69,0.3); }}
+        .flow-node.sink {{ background: rgba(253,126,20,0.2); border: 1px solid rgba(253,126,20,0.3); }}
+        .flow-arrow {{ color: #555; }}
 
-        /* Tables */
-        table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-        th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #2a2a4a; }}
-        th {{ color: #888; font-weight: 600; font-size: 12px; text-transform: uppercase; }}
-        tr:hover {{ background: rgba(255,255,255,0.02); }}
+        /* Download bar */
+        .download-bar {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }}
+        .download-btn {{ padding: 8px 16px; border-radius: 6px; border: 1px solid #2a2a4a; background: #1a1a3e; color: #e0e0e0; text-decoration: none; font-size: 13px; }}
+        .download-btn:hover {{ border-color: #00d4ff; color: #00d4ff; }}
+
+        /* Tabs */
+        .tabs {{ display: flex; gap: 2px; margin-bottom: 12px; }}
+        .tab {{ padding: 8px 16px; border-radius: 6px 6px 0 0; background: #1a1a3e; border: 1px solid #2a2a4a; cursor: pointer; font-size: 12px; color: #888; }}
+        .tab.active {{ background: #0f0f23; color: #00d4ff; border-bottom-color: #0f0f23; }}
+        .tab:hover {{ color: #e0e0e0; }}
+        .tab-content {{ display: none; }}
+        .tab-content.active {{ display: block; }}
+
+        /* Filter Bar */
+        .filter-bar {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }}
+        .filter-btn {{ padding: 4px 12px; border-radius: 12px; border: 1px solid #2a2a4a; background: transparent; color: #888; cursor: pointer; font-size: 12px; }}
+        .filter-btn:hover {{ border-color: #555; color: #e0e0e0; }}
+        .filter-btn.active {{ border-color: #00d4ff; color: #00d4ff; background: rgba(0,212,255,0.1); }}
+
+        /* Chart containers */
+        .chart-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
+        .chart-box {{ height: 220px; }}
 
         /* Footer */
         .footer {{ text-align: center; padding: 20px; color: #555; font-size: 12px; }}
 
-        /* Tabs */
-        .tabs {{ display: flex; gap: 4px; margin-bottom: 16px; }}
-        .tab {{ padding: 8px 16px; border-radius: 6px 6px 0 0; background: #1a1a3e; border: 1px solid #2a2a4a; border-bottom: none; cursor: pointer; font-size: 13px; color: #888; }}
-        .tab.active {{ background: #0f0f23; color: #00d4ff; border-color: #00d4ff; }}
-        .tab:hover {{ color: #e0e0e0; }}
+        /* Search */
+        .search-box {{ padding: 8px 12px; border-radius: 6px; border: 1px solid #2a2a4a; background: #0f0f23; color: #e0e0e0; font-size: 13px; width: 200px; }}
+        .search-box:focus {{ outline: none; border-color: #00d4ff; }}
+
+        @media (max-width: 768px) {{
+            .chart-row {{ grid-template-columns: 1fr; }}
+            .evidence-grid {{ grid-template-columns: 1fr; }}
+            .info-grid {{ grid-template-columns: 1fr; }}
+            .summary-grid {{ grid-template-columns: repeat(3, 1fr); }}
+        }}
     </style>
 </head>
 <body>
+    <div class="nav">
+        <a href="#summary">Summary</a>
+        <a href="#risk">Risk</a>
+        <a href="#distribution">Distribution</a>
+        <a href="#files">Files</a>
+        <a href="#findings">Findings <span class="badge" style="background:#dc3545;">{critical_count}</span></a>
+        <a href="#remediation">Remediation</a>
+        <a href="#about">About</a>
+    </div>
+
     <div class="container">
         <!-- Header -->
-        <div class="header">
-            <h1>Security Audit Report</h1>
+        <div class="header" id="summary">
+            <h1>&#128274; Security Audit Report</h1>
             <div class="meta">
-                <span>Project: {project_name}</span>
-                <span>Scan: {scan_date}</span>
-                <span>Tool: {tool_name} v{tool_version}</span>
+                <span><strong>Project:</strong> {project_name}</span>
+                <span><strong>Scan:</strong> {scan_date}</span>
+                <span><strong>Tool:</strong> {tool_name} v{tool_version}</span>
+                <span><strong>Source:</strong> {project_source}</span>
+                <span><strong>Findings:</strong> {total_findings}</span>
             </div>
         </div>
 
-        <!-- Summary Stats -->
-        <div class="card">
-            <h2>Summary / 扫描摘要</h2>
+        <!-- Download Bar -->
+        <div class="download-bar">
+            <span style="color:#888;font-size:13px;padding:8px 0;">Download / 下载:</span>
+            <a class="download-btn" href="{report_md_path}" target="_blank">&#128196; Markdown</a>
+            <a class="download-btn" href="{report_json_path}" target="_blank">&#128200; JSON</a>
+            <span style="color:#888;font-size:12px;padding:8px 0;margin-left:auto;">{findings_count_desc}</span>
+        </div>
+
+        <!-- Risk Score -->
+        <div class="card" id="risk">
+            <h2>&#127919; Risk Assessment / 风险评估</h2>
+            <div class="risk-meter">
+                <div>
+                    <div class="risk-score {risk_class}">{risk_score}</div>
+                    <div style="font-size:12px;color:#888;">{risk_label}</div>
+                </div>
+                <div style="flex:1;">
+                    <div class="risk-bar"><div class="risk-bar-fill {risk_class}" style="width:{risk_pct}%;"></div></div>
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:#555;margin-top:4px;">
+                        <span>Low / 低</span>
+                        <span>Medium / 中</span>
+                        <span>High / 高</span>
+                        <span>Critical / 严重</span>
+                    </div>
+                </div>
+                <div class="risk-detail">
+                    <div>&#128337; Files: {files_scanned}</div>
+                    <div>&#128220; Findings: {total_findings}</div>
+                    <div>&#9888;&#65039; Critical: {critical_count}</div>
+                </div>
+            </div>
+
             <div class="summary-grid">
                 <div class="stat-card critical">
                     <div class="stat-number">{critical_count}</div>
@@ -456,76 +549,181 @@ class ReportGenerator:
                     <div class="stat-label">Info / 信息</div>
                 </div>
                 <div class="stat-card info">
+                    <div class="stat-number">{files_scanned}</div>
+                    <div class="stat-label">Files / 文件</div>
+                </div>
+                <div class="stat-card total">
                     <div class="stat-number">{total_findings}</div>
                     <div class="stat-label">Total / 总计</div>
                 </div>
-                <div class="stat-card info">
-                    <div class="stat-number">{files_scanned}</div>
-                    <div class="stat-label">Files / 文件数</div>
-                </div>
             </div>
-            <table class="info-table" style="margin-top: 12px;">
-                <tr><td>Project</td><td>{project_name}</td><td>Language</td><td>{languages}</td></tr>
-                <tr><td>Source</td><td>{project_source}</td><td>Findings</td><td>{total_findings} ({critical_count} critical)</td></tr>
-            </table>
+
+            <div class="info-grid" style="margin-top:12px;">
+                <div class="info-row"><span class="label">Project</span><span class="value">{project_name}</span></div>
+                <div class="info-row"><span class="label">Source</span><span class="value">{project_source}</span></div>
+                <div class="info-row"><span class="label">Languages</span><span class="value">{languages}</span></div>
+                <div class="info-row"><span class="label">Severity Distribution</span><span class="value">{critical_count}C / {high_count}H / {medium_count}M / {info_count}I</span></div>
+                <div class="info-row"><span class="label">Scan Duration</span><span class="value">{scan_duration}s</span></div>
+                <div class="info-row"><span class="label">Risk Score</span><span class="value">{risk_score}/100 ({risk_label})</span></div>
+            </div>
         </div>
 
         <!-- Charts -->
-        <div class="card">
-            <h2>Distribution / 漏洞分布</h2>
-            <div class="chart-container">
-                <canvas id="severityChart"></canvas>
+        <div class="card" id="distribution">
+            <h2>&#128202; Vulnerability Distribution / 漏洞分布</h2>
+            <div class="chart-row">
+                <div class="chart-box"><canvas id="severityChart"></canvas></div>
+                <div class="chart-box"><canvas id="typeChart"></canvas></div>
             </div>
         </div>
 
-        <!-- Findings -->
+        <!-- File Breakdown -->
+        <div class="card" id="files">
+            <h2>&#128193; File Breakdown / 文件分析</h2>
+            {file_breakdown_html}
+        </div>
+
+        <!-- All Findings Table -->
         <div class="card">
-            <h2>Findings / 漏洞详情</h2>
+            <h2>&#128203; Findings Summary / 发现汇总</h2>
+            <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input class="search-box" id="searchInput" placeholder="Search / 搜索..." onkeyup="filterTable()">
+                <button class="filter-btn active" onclick="filterSeverity(this,'all')" id="f-all">All</button>
+                <button class="filter-btn" onclick="filterSeverity(this,'critical')" id="f-critical">Critical</button>
+                <button class="filter-btn" onclick="filterSeverity(this,'high')" id="f-high">High</button>
+                <button class="filter-btn" onclick="filterSeverity(this,'medium')" id="f-medium">Medium</button>
+                <button class="filter-btn" onclick="filterSeverity(this,'low')" id="f-low">Low</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table id="findingsTable">
+                    <thead><tr>
+                        <th onclick="sortTable(0)">ID</th>
+                        <th onclick="sortTable(1)">Severity / 等级</th>
+                        <th onclick="sortTable(2)">Type / 类型</th>
+                        <th onclick="sortTable(3)">File / 文件</th>
+                        <th onclick="sortTable(4)">Line / 行</th>
+                        <th onclick="sortTable(5)">CWE</th>
+                        <th onclick="sortTable(6)">Status</th>
+                    </tr></thead>
+                    <tbody id="findingsTableBody">
+                        {table_rows_html}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Detailed Findings -->
+        <div class="card" id="findings">
+            <h2>&#128270; Detailed Findings / 漏洞详情</h2>
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab(this,'card')">Card View / 卡片</div>
+                <div class="tab" onclick="switchTab(this,'list')">List View / 列表</div>
+            </div>
             {findings_html}
         </div>
 
-        <!-- Type Distribution Table -->
+        <!-- Type Distribution -->
         <div class="card">
-            <h2>Categories / 漏洞分类</h2>
+            <h2>&#128202; Categories / 漏洞分类</h2>
             <table>
-                <tr><th>Type / 漏洞类型</th><th>Count / 数量</th><th>Severity / 等级</th></tr>
+                <tr><th>Type / 漏洞类型</th><th>Count / 数量</th><th>Severity / 等级</th><th>CWE</th></tr>
                 {type_dist_html}
             </table>
         </div>
 
         <!-- Fix Suggestions -->
-        <div class="card">
-            <h2>Remediation / 修复建议</h2>
+        <div class="card" id="remediation">
+            <h2>&#128295; Remediation / 修复建议</h2>
             {fix_html}
         </div>
 
-        <div class="footer">
-            Generated by {tool_name} v{tool_version} | {scan_date}
+        <!-- About -->
+        <div class="card" id="about" style="text-align:center;">
+            <p style="color:#555;font-size:12px;">
+                Generated by {tool_name} v{tool_version}<br>
+                Scan Date: {scan_date} &bull; Project: {project_name}
+            </p>
         </div>
     </div>
 
     <script>
-        const ctx = document.getElementById('severityChart').getContext('2d');
-        new Chart(ctx, {{
+        // Severity Chart
+        new Chart(document.getElementById('severityChart'), {{
             type: 'doughnut',
             data: {{
                 labels: ['Critical / 高危 ({critical_count})', 'High / 中危 ({high_count})', 'Medium / 低危 ({medium_count})', 'Info / 信息 ({info_count})'],
                 datasets: [{{
                     data: [{critical_count}, {high_count}, {medium_count}, {info_count}],
                     backgroundColor: ['#dc3545', '#fd7e14', '#ffc107', '#0d6efd'],
-                    borderColor: ['#dc3545', '#fd7e14', '#ffc107', '#0d6efd'],
-                    borderWidth: 2
+                }}]
+            }},
+            options: {{ responsive: true, maintainAspectRatio: false, plugins: {{ legend: {{ position: 'right', labels: {{ color: '#e0e0e0' }} }} }} }}
+        }});
+
+        // Type Chart
+        new Chart(document.getElementById('typeChart'), {{
+            type: 'bar',
+            data: {{
+                labels: [{type_labels}],
+                datasets: [{{
+                    label: 'Count',
+                    data: [{type_data}],
+                    backgroundColor: [{type_colors}],
                 }}]
             }},
             options: {{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {{
-                    legend: {{ position: 'right', labels: {{ color: '#e0e0e0', padding: 16 }} }},
-                    tooltip: {{ callbacks: {{ label: function(ctx) {{ return ctx.label + ': ' + ctx.parsed; }} }} }}
-                }}
+                responsive: true, maintainAspectRatio: false,
+                plugins: {{ legend: {{ display: false }} }},
+                scales: {{ x: {{ ticks: {{ color: '#888' }} }}, y: {{ ticks: {{ color: '#888', stepSize: 1 }} }} }}
             }}
         }});
+
+        // Accordion
+        document.querySelectorAll('.finding-header').forEach(h => {{
+            h.addEventListener('click', () => {{
+                h.nextElementSibling.classList.toggle('open');
+            }});
+        }});
+
+        // Table filter
+        function filterSeverity(btn, sev) {{
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            var rows = document.querySelectorAll('#findingsTableBody tr');
+            rows.forEach(r => {{
+                if(sev === 'all') {{ r.style.display = ''; }}
+                else {{ r.style.display = r.dataset.severity === sev ? '' : 'none'; }}
+            }});
+        }}
+
+        // Table search
+        function filterTable() {{
+            var input = document.getElementById('searchInput').value.toLowerCase();
+            var rows = document.querySelectorAll('#findingsTableBody tr');
+            rows.forEach(r => {{
+                r.style.display = r.textContent.toLowerCase().includes(input) ? '' : 'none';
+            }});
+        }}
+
+        // Table sort
+        var sortDir = {{}};
+        function sortTable(col) {{
+            sortDir[col] = !(sortDir[col] || false);
+            var dir = sortDir[col] ? 1 : -1;
+            var tbody = document.getElementById('findingsTableBody');
+            var rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort((a,b) => {{
+                var va = a.cells[col].textContent.trim(), vb = b.cells[col].textContent.trim();
+                return va.localeCompare(vb) * dir;
+            }});
+            rows.forEach(r => tbody.appendChild(r));
+        }}
+
+        // Tab switch
+        function switchTab(el, name) {{
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            el.classList.add('active');
+        }}
     </script>
 </body>
 </html>
@@ -667,6 +865,66 @@ class ReportGenerator:
             cls = {'高危': 'critical', '中危': 'high', '低危': 'medium', '信息': 'low'}.get(sev, 'low')
             type_dist_html += f'<tr><td>{vtype}</td><td>{count}</td><td><span class="tag {cls}">{sev}</span></td></tr>'
 
+        # 风险评分计算
+        c = data['summary']['by_severity'].get('高危', 0)
+        h = data['summary']['by_severity'].get('中危', 0)
+        m = data['summary']['by_severity'].get('低危', 0)
+        i = data['summary']['by_severity'].get('信息', 0)
+        risk_score = min(100, c * 25 + h * 10 + m * 5)
+        if risk_score >= 70:
+            risk_class, risk_label = 'critical', 'CRITICAL / 严重'
+        elif risk_score >= 40:
+            risk_class, risk_label = 'high', 'HIGH / 高危'
+        elif risk_score >= 15:
+            risk_class, risk_label = 'medium', 'MEDIUM / 中危'
+        else:
+            risk_class, risk_label = 'low', 'LOW / 低危'
+
+        # 表格行
+        table_rows_html = ""
+        for sev_order in ["高危", "中危", "低危", "信息"]:
+            sev_map = {"高危": "critical", "中危": "high", "低危": "medium", "信息": "low"}
+            for f in data['severity_groups'].get(sev_order, []):
+                sev_cls = sev_map.get(sev_order, "low")
+                table_rows_html += f'''
+                <tr data-severity="{sev_cls}">
+                    <td style="font-size:11px;color:#666;">{f.get('id','')}</td>
+                    <td><span class="tag {sev_cls}">{sev_order}</span></td>
+                    <td>{f.get('vuln_name','')}</td>
+                    <td style="font-family:monospace;font-size:12px;">{f.get('file','')}</td>
+                    <td>{f.get('line','')}</td>
+                    <td><span class="tag cwe">{f.get('cwe','')}</span></td>
+                    <td><span class="status {'ok' if f.get('is_real',True) else 'warn'}">{'Confirmed' if f.get('is_real',True) else 'Pending'}</span></td>
+                </tr>'''
+
+        # 类型图表数据
+        type_counts = data['summary'].get('by_type', {})
+        sorted_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)
+        type_labels = ','.join(f"'{t[0][:12]}'" for t in sorted_types[:10])
+        type_data = ','.join(str(t[1]) for t in sorted_types[:10])
+        type_colors = ','.join(["'#dc3545'","'#fd7e14'","'#ffc107'","'#28a745'","'#0d6efd'","'#6f42c1'","'#20c997'","'#e83e8c'","'#17a2b8'","'#6c757d'"][:len(sorted_types[:10])])
+
+        # 文件分布
+        file_counts = data['summary'].get('by_file', {})
+        file_breakdown_html = ""
+        if file_counts:
+            file_breakdown_html = '<table><tr><th>File / 文件</th><th>Findings / 发现数</th><th>Files / 占比</th></tr>'
+            total_files = data['summary']['scan_stats'].get('files_scanned', 1) or 1
+            for fname, fcount in list(file_counts.items())[:15]:
+                pct = fcount / max(data['summary']['total_findings'], 1) * 100
+                file_breakdown_html += f'<tr><td style="font-family:monospace;font-size:12px;">{fname}</td><td>{fcount}</td><td>{pct:.0f}%</td></tr>'
+            file_breakdown_html += '</table>'
+        else:
+            file_breakdown_html = '<p style="color:#555;font-size:13px;">No file-specific data available.</p>'
+
+        # 报告路径
+        base_dir = os.path.dirname(output_path)
+        base_name = os.path.basename(output_path).replace('.html', '')
+        report_md_path = f"{base_name}.md"
+        report_json_path = f"{base_name}.json"
+        findings_count_desc = f"{data['summary']['total_findings']} findings ({c} critical, {h} high, {m} medium, {i} info)"
+        scan_duration = data['summary']['scan_stats'].get('elapsed', 0) if data['summary']['scan_stats'] else 0
+
         # 填充模板
         html = html.format(
             project_name=data['project']['name'],
@@ -675,15 +933,20 @@ class ReportGenerator:
             tool_name=data['metadata']['tool'],
             tool_version=data['metadata']['version'],
             total_findings=data['summary']['total_findings'],
-            critical_count=data['summary']['by_severity'].get('高危', 0),
-            high_count=data['summary']['by_severity'].get('中危', 0),
-            medium_count=data['summary']['by_severity'].get('低危', 0),
-            info_count=data['summary']['by_severity'].get('信息', 0),
+            critical_count=c, high_count=h, medium_count=m, info_count=i,
             files_scanned=data['summary']['scan_stats'].get('files_scanned', 0) if data['summary']['scan_stats'] else 0,
             languages=lang_str,
             findings_html=findings_html,
             type_dist_html=type_dist_html,
             fix_html=fix_html,
+            risk_score=risk_score, risk_class=risk_class,
+            risk_label=risk_label, risk_pct=risk_score,
+            report_md_path=report_md_path, report_json_path=report_json_path,
+            findings_count_desc=findings_count_desc,
+            table_rows_html=table_rows_html,
+            type_labels=type_labels, type_data=type_data, type_colors=type_colors,
+            file_breakdown_html=file_breakdown_html,
+            scan_duration=scan_duration,
         )
 
         with open(output_path, 'w', encoding='utf-8') as f:
