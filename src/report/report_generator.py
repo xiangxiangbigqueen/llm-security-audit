@@ -3,10 +3,10 @@
 生成结构化安全审计报告（Markdown / HTML / JSON）
 
 【主流技术使用标注】
-★ 结构化报告: 同时输出 MD + JSON + HTML 三种格式（行 30-56）
-★ OWASP 标准: 按高危/中危/低危/信息分级（行 61-67）
-★ CWE 关联: 每个漏洞附带 CWE 编号和修复建议
-★ 可视化: HTML 报告含 CSS 样式，适合浏览器展示
+★ 结构化报告: 同时输出 MD + JSON + HTML 三种格式
+★ 证据链输出: 每个漏洞附带完整证据链（位置、调用路径、验证结果）
+★ CWE 标准: 漏洞关联 CWE 编号和风险评估
+★ 修复建议: 每类漏洞附带可操作的修复方案
 """
 
 import os
@@ -194,6 +194,53 @@ class ReportGenerator:
                 if f.get('context'):
                     lines.append("```")
                     lines.append(f.get('context', ''))
+                    lines.append("```")
+                    lines.append("")
+
+                # === 🆕 证据链（新增） ===
+                poc = f.get('poc', {})
+                evidence = poc.get('evidence_chain', {}) if isinstance(poc, dict) else {}
+
+                if evidence:
+                    lines.append("#### 🔗 证据链")
+                    lines.append("")
+                    # 1. 文件位置
+                    lines.append("**① 文件位置**")
+                    loc = evidence.get('file_location', {})
+                    lines.append(f"- 文件: `{loc.get('file', '')}`")
+                    lines.append(f"- 行号: {loc.get('line', 0)}")
+                    lines.append("")
+                    # 2. 调用路径
+                    call_path = evidence.get('call_path', [])
+                    if call_path:
+                        lines.append("**② 调用路径（输入源 → 危险函数）**")
+                        lines.append("```")
+                        for step in call_path[-8:]:  # 最近 8 步
+                            lines.append(f"  [{step.get('step','?')}] 行 {step.get('line','?')}: {step.get('code','')}")
+                        lines.append("```")
+                        lines.append(f"- **输入源**: {evidence.get('input_source', '未知')}")
+                        lines.append(f"- **危险函数**: {evidence.get('sink_function', '未知')}")
+                        lines.append("")
+                    # 3. 验证结果
+                    ver = evidence.get('verification', {})
+                    lines.append("**③ 验证结果**")
+                    lines.append(f"- **真实性**: {'✅ 确认漏洞' if ver.get('is_real') else '❌ 误报'}")
+                    lines.append(f"- **严重程度**: {ver.get('confirmed_severity', '未知')}")
+                    lines.append(f"- **可利用性**: {poc.get('exploitability', '需要验证')}")
+                    lines.append("")
+                    # 4. 证据完整性
+                    integrity = evidence.get('evidence_integrity', {})
+                    if integrity:
+                        passed = sum(v for v in integrity.values() if isinstance(v, bool))
+                        total = sum(1 for v in integrity.values() if isinstance(v, bool))
+                        lines.append(f"**④ 证据完整性**: {passed}/{total}")
+                        lines.append("")
+
+                # PoC 代码
+                if isinstance(poc, dict) and poc.get('poc_code'):
+                    lines.append("**💥 PoC 利用代码**")
+                    lines.append(f"```python")
+                    lines.append(poc['poc_code'][:500])
                     lines.append("```")
                     lines.append("")
 

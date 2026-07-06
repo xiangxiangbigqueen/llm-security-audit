@@ -160,6 +160,14 @@ def main():
     print(f"  代码文件数: {len(files)}")
     print(f"  语言分布: {project_info.get('languages', {})}")
 
+    # 初始化 MCP Server（新增）
+    mcp_server = None
+    if not args.quick:
+        print(f"\n🛠️  初始化 MCP 工具服务器...")
+        from src.agents.mcp_server import create_mcp_server
+        mcp_server = create_mcp_server(project_path)
+        mcp_server.print_tools()
+
     # ---------------------------------------------------------------
     # 阶段 2: 并行 SAST 扫描（使用 Orchestrator 并优化）
     # ---------------------------------------------------------------
