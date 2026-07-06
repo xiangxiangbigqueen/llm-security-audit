@@ -329,13 +329,22 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(100)
         self.progress_bar.setFormat("100% - 审计完成")
 
-        # 更新漏洞列表
+        # 更�漏洞列表
         self._update_vuln_table(result.vulnerabilities)
 
         # 更新报告预览
         if result.report_data:
             report_md = self.report_generator._render_markdown(result.report_data)
             self.report_view.setPlainText(report_md)
+
+            # 自动保存报告到 output/reports
+            try:
+                md_path = self.report_generator.generate_markdown(result.report_data)
+                html_path = self.report_generator.generate_html(result.report_data)
+                self._append_log("系统", f"报告已自动保存: {md_path}")
+                self._append_log("系统", f"报告已自动保存: {html_path}")
+            except Exception as e:
+                self._append_log("系统", f"报告自动保存失败: {e}")
 
         self._append_log("系统",
                         f"审计完成! 耗时{result.duration:.1f}秒, "

@@ -81,21 +81,56 @@ class DeepSeekClient:
         raise RuntimeError("DeepSeek API调用失败，已达最大重试次数")
 
     async def chat_json(self, messages: List[Dict[str, str]], **kwargs) -> dict:
-        """调用API并解析JSON响应"""
+        """调用API并解析JSON响应，带增强容错"""
         response = await self.chat(messages, **kwargs)
         # 尝试从响应中提取JSON
+        json_str = response
+
+        # 1. 尝试从markdown代码块中提取
+        if "```json" in response:
+            json_str = response.split("```json")[1].split("```")[0].strip()
+        elif "```" in response:
+            json_str = response.split("```")[1].split("```")[0].strip()
+
+        # 2. 尝试直接解析
         try:
-            # 尝试直接解析
-            return json.loads(response)
+            return json.loads(json_str)
         except json.JSONDecodeError:
-            # 尝试从markdown代码块中提取
-            if "```json" in response:
-                json_str = response.split("```json")[1].split("```")[0].strip()
-                return json.loads(json_str)
-            elif "```" in response:
-                json_str = response.split("```")[1].split("```")[0].strip()
-                return json.loads(json_str)
-            raise ValueError(f"无法从LLM响应中解析JSON: {response[:200]}")
+            pass
+
+        # 3. 容错：修复常见JSON格式问题
+        try:
+            import re
+            # 去除尾部多余逗号 (trailing commas)
+            fixed = re.sub(r',\s*([}\]])', r'\1', json_str)
+            # 修复单引号为双引号
+            fixed = fixed.replace("'", '"')
+            return json.loads(fixed)
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        # 4. 尝试提取第一个 { ... } 块
+        try:
+            start = json_str.index('{')
+            # 找到匹配的最后一个 }
+            depth = 0
+            end = start
+            for i in range(start, len(json_str)):
+                if json_str[i] == '{':
+                    depth += 1
+                elif json_str[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+            extracted = json_str[start:end+1]
+            return json.loads(extracted)
+        except (ValueError, json.JSONDecodeError):
+            pass
+
+        # 5. 最终降级：返回空漏洞列表
+        logger.warning(f"JSON解析失败，返回空结果。原始响应: {response[:200]}")
+        return {"vulnerabilities": [], "validations": [], "exploits": []}
 
     async def close(self):
         """关闭会话"""

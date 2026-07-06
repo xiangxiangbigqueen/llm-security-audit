@@ -1,4 +1,5 @@
 """验证智能体"""
+import asyncio
 import json
 import os
 from typing import List, Dict, Tuple
@@ -9,6 +10,7 @@ from core.llm.message_builder import MessageBuilder
 from core.models.vulnerability import Vulnerability
 from core.models.project import ProjectMetadata
 from config.prompts.validator import VALIDATOR_SYSTEM_PROMPT, VALIDATOR_CONTEXT_PROMPT
+from config.settings import MAX_CONCURRENT_SCANS
 
 
 class ValidatorAgent(BaseAgent):
@@ -33,15 +35,26 @@ class ValidatorAgent(BaseAgent):
         need_more_context = []
 
         total = len(vulnerabilities)
-        for i, vuln in enumerate(vulnerabilities):
-            progress = (i + 1) / max(total, 1)
-            self._emit_progress(progress, f"验证漏洞 #{i+1}/{total}: {vuln.vulnerability_type}")
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCANS)
+        completed = [0]
 
-            # 读取漏洞相关代码上下文
-            context_code = await self._get_context_code(vuln, project)
+        async def validate_one(vuln):
+            async with semaphore:
+                context_code = await self._get_context_code(vuln, project)
+                judgment = await self._validate_single(vuln, context_code, project)
+                completed[0] += 1
+                progress = completed[0] / max(total, 1)
+                self._emit_progress(progress, f"已验证 {completed[0]}/{total}: {vuln.vulnerability_type}")
+                return vuln, judgment
 
-            # LLM验证
-            judgment = await self._validate_single(vuln, context_code, project)
+        tasks = [validate_one(v) for v in vulnerabilities]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, Exception):
+                self._emit_log("warning", f"验证异常: {result}")
+                continue
+            vuln, judgment = result
 
             if judgment["judgment"] == "CONFIRMED":
                 vuln.validation_status = "confirmed"
