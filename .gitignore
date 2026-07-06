@@ -32,3 +32,18 @@ Thumbs.db
 
 # Logs
 *.log
+neo4j-server/
+workspace/
+reports/
+push_to_github.bat
+
+# Neo4j server binary
+neo4j-server/
+
+# Generated data
+reports/
+workspace/
+ci-reports/
+
+# Temp scripts
+push_to_github.bat
