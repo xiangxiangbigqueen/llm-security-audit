@@ -156,9 +156,15 @@ class VerifierAgent:
         }
 
     def _verify_by_llm(self, finding: dict) -> Optional[dict]:
-        """使用 LLM 进行语义级别的验证"""
-        file_path = os.path.join(self.project_path, finding["file"])
+        """使用国内大模型 API（DeepSeek/Qwen/GLM）进行语义级别的验证"""
+        from src.analyzers.llm_api import get_llm_client
+        from config.settings import LLM_CONFIG
 
+        cfg = LLM_CONFIG
+        if not cfg.get("enabled", True):
+            return None
+
+        file_path = os.path.join(self.project_path, finding["file"])
         if not os.path.exists(file_path):
             return None
 
@@ -168,7 +174,6 @@ class VerifierAgent:
         except:
             return None
 
-        # 限制代码长度
         if len(code_content) > 6000:
             code_content = code_content[:6000] + "\n# ... (截断)"
 
@@ -177,65 +182,30 @@ class VerifierAgent:
         line_end = min(len(lines), finding["line"] + 10)
         code_snippet = '\n'.join(lines[line_start:line_end])
 
-        prompt = f"""你是一个安全审计专家。请分析以下代码片段，判断是否存在安全漏洞。
+        # 调用国内大模型 API（默认 DeepSeek）
+        llm = get_llm_client(
+            api_key=cfg.get("api_key", ""),
+            api_base=cfg.get("api_base", "https://api.deepseek.com"),
+            model=cfg.get("model", "deepseek-chat"),
+        )
+        result = llm.verify_finding(
+            code_snippet=code_snippet,
+            vuln_name=finding['vuln_name'],
+            cwe=finding.get('cwe', ''),
+            file_path=f"{finding['file']}:{finding['line']}"
+        )
 
-## 漏洞类型: {finding['vuln_name']}
-## CWE: {finding['cwe']}
-## 文件: {finding['file']}:{finding['line']}
-## 匹配内容: {finding['match'][:200]}
-
-## 代码上下文:
-```{os.path.splitext(finding['file'])[1].lstrip('.') if os.path.splitext(finding['file'])[1] else ''}
-{code_snippet}
-```
-
-## 分析要求:
-请从以下维度分析：
-1. 输入是否受攻击者控制？
-2. 是否存在足够的防护/过滤/转义措施？
-3. 数据流向是否可达敏感操作？
-4. 这是真实漏洞还是误报？
-
-## 输出格式（仅JSON）:
-```json
-{{
-  "is_real_vulnerability": bool,
-  "confidence": "high/medium/low",
-  "reasoning": "简要推理过程",
-  "attack_vector": "可能的攻击路径",
-  "impact": "被利用后的影响",
-  "fix_suggestion": "具体的修复建议",
-  "severity_rating": "critical/high/medium/low/info"
-}}
-```"""
-
-        try:
-            result = subprocess.run(
-                ["claude", "prompt", prompt, "--print"],
-                capture_output=True, text=True, timeout=90
-            )
-            if result.returncode != 0:
-                return None
-
-            output = result.stdout.strip()
-            json_match = re.search(r'```json\s*(.*?)\s*```', output, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_str = output
-
-            result_data = json.loads(json_str)
+        if result and "error" not in result:
             return {
-                "verified": result_data.get("is_real_vulnerability", False),
-                "confidence": result_data.get("confidence", "low"),
-                "reasoning": result_data.get("reasoning", ""),
-                "attack_vector": result_data.get("attack_vector", ""),
-                "impact": result_data.get("impact", ""),
-                "fix_suggestion": result_data.get("fix_suggestion", ""),
-                "severity_rating": result_data.get("severity_rating", "medium"),
+                "verified": result.get("is_real_vulnerability", False),
+                "confidence": result.get("confidence", "low"),
+                "reasoning": result.get("reasoning", ""),
+                "attack_vector": result.get("attack_vector", ""),
+                "impact": result.get("impact", ""),
+                "fix_suggestion": result.get("fix_suggestion", ""),
+                "severity_rating": result.get("severity_rating", "medium"),
             }
-        except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
-            return {"verified": False, "error": str(e)}
+        return {"verified": False, "error": result.get("error", "LLM分析失败")}
 
     def print_summary(self):
         """打印验证摘要"""

@@ -2,7 +2,7 @@
 # 实验一：大模型驱动的开源项目安全审计系统
 
 # 核心依赖
-requests>=2.31.0          # GitHub/GitLab API 调用
+requests>=2.31.0          # GitHub/GitLab API 调用 + LLM API 通信
 pyyaml>=6.0               # 配置文件解析
 jinja2>=3.1.0             # 报告模板引擎
 

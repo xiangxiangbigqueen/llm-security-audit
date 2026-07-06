@@ -175,9 +175,28 @@ class ScannerAgent:
 
     def _llm_deep_scan(self, project_path: str, files: list):
         """
-        使用 Claude Code 进行深度分析
-        对规则匹配到的可疑文件进行 LLM 验证
+        使用 LLM API 进行深度分析
+        对规则匹配到的可疑文件进行语义级验证
+        支持: DeepSeek / Qwen / GLM 等国内大模型
         """
+        from src.analyzers.llm_api import get_llm_client
+        from config.settings import LLM_CONFIG
+
+        cfg = LLM_CONFIG
+        if not cfg.get("enabled", True):
+            return
+
+        llm = get_llm_client(
+            api_key=cfg.get("api_key", ""),
+            api_base=cfg.get("api_base", "https://api.deepseek.com"),
+            model=cfg.get("model", "deepseek-chat"),
+        )
+
+        if not llm.api_available:
+            print(f"  ⚠️ LLM API 未配置，跳过深度分析")
+            print(f"    设置 ANTHROPIC_API_KEY 环境变量即可启用")
+            return
+
         # 收集有潜在问题的文件
         suspicious_files = {}
         for f in self.findings:
@@ -200,87 +219,31 @@ class ScannerAgent:
             except:
                 continue
 
-            # 截取代码（限制长度）
             if len(code_content) > 8000:
                 code_content = code_content[:8000] + "\n# ... (剩余代码已截断)"
 
-            # 为这个文件的发现构建验证 prompt
-            findings_text = "\n".join([
-                f"- [{f['severity']}] {f['vuln_name']} (行 {f['line']}): {f['match'][:100]}"
-                for f in file_findings
-            ])
+            # 使用 LLM API 验证
+            result = llm.analyze_security(
+                code=code_content,
+                file_path=file_relpath,
+                vuln_type=",".join(f["vuln_name"] for f in file_findings)
+            )
 
-            prompt = f"""请对以下代码安全扫描结果进行人工验证，判断是否为真正的安全漏洞：
-
-## 文件: {file_relpath}
-
-## 代码内容:
-```{os.path.splitext(file_relpath)[1].lstrip('.') if os.path.splitext(file_relpath)[1] else ''}
-{code_content}
-```
-
-## 扫描发现的问题:
-{findings_text}
-
-## 验证要求：
-请逐条分析每个发现：
-1. **是否为真正的漏洞**？还是误报（如测试代码、已过滤的输入等）？
-2. **漏洞严重程度评估**：确认/升级/降级
-3. **攻击者如何利用**：简要描述攻击路径
-4. **修复建议**：如何修复此漏洞
-
-请以 JSON 格式返回验证结果：
-```json
-[
-  {{
-    "finding_id": "类别-序号",
-    "is_real_vulnerability": true/false,
-    "confirmed_severity": "高危/中危/低危/信息",
-    "exploit_scenario": "攻击场景描述",
-    "fix_suggestion": "修复建议",
-    "confidence": "high/medium/low"
-  }}
-]
-```
-
-只返回 JSON，不要有其他内容。"""
-
-            try:
-                result = subprocess.run(
-                    ["claude", "prompt", prompt, "--print"],
-                    capture_output=True, text=True, timeout=60
-                )
-                if result.returncode == 0:
-                    output = result.stdout.strip()
-                    # 提取 JSON 部分
-                    json_match = re.search(r'```json\n(.*?)\n```', output, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group(1)
-                    else:
-                        json_str = output
-
-                    try:
-                        verifications = json.loads(json_str)
-                        if isinstance(verifications, list):
-                            for v in verifications:
-                                fid = v.get("finding_id", "")
-                                for f in self.findings:
-                                    if f["id"] == fid:
-                                        f["verified"] = True
-                                        f["is_real"] = v.get("is_real_vulnerability", False)
-                                        f["confirmed_severity"] = v.get("confirmed_severity", f["severity"])
-                                        f["exploit_scenario"] = v.get("exploit_scenario", "")
-                                        f["fix_suggestion"] = v.get("fix_suggestion", "")
-                                        f["source"] = "pattern_match+llm_verified"
-                                        break
-                            verified_count += len(verifications)
-                            self.scan_stats["llm_findings"] += len(verifications)
-                    except json.JSONDecodeError:
-                        pass
-                print(f"    ✓ LLM 验证完成: {file_relpath}")
-            except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-                print(f"    ⚠️ LLM 分析跳过 ({file_relpath}): {type(e).__name__}")
-                continue
+            if result and result.get("findings"):
+                for finding in result["findings"]:
+                    ftype = finding.get("type", "").lower()
+                    for f in self.findings:
+                        if f["file"] == file_relpath and \
+                           (ftype in f["vuln_name"].lower() or
+                            f["category"] in ftype):
+                            f["verified"] = True
+                            f["is_real"] = True
+                            f["source"] = "pattern_match+llm_api"
+                            f["fix_suggestion"] = finding.get("fix_suggestion", "")
+                            f["exploit_scenario"] = finding.get("attack_vector", "")
+                            break
+                verified_count += 1
+                print(f"    ✓ LLM API 验证完成: {file_relpath}")
 
         if verified_count:
             print(f"  🤖 LLM 深度分析完成，验证了 {verified_count} 个发现")

@@ -3,7 +3,7 @@ LLM Security Audit System - SAST 安全审计配置
 实验一：大模型驱动的开源项目安全审计系统
 
 【主流技术使用标注】
-★ LLM 配置: 使用 Claude Sonnet 4.6，配置 Agent 模式和 temperature（行 11-16）
+★ LLM 配置: 支持 DeepSeek/Qwen/GLM 等国内大模型 API（行 17-30）
 ★ SAST 规则库: 8 类漏洞的检测规则（行 48-147）
 ★ CWE 标准: 每类漏洞关联 CWE 编号（CWE-89/78/22/798/79/502/918）
 ★ OWASP 分类: 覆盖 OWASP Top 10 中 SQL注入/XSS/SSRF 等核心类别
@@ -14,12 +14,19 @@ LLM Security Audit System - SAST 安全审计配置
 # 系统配置
 # ============================================================
 
-# LLM 配置（使用 Claude Code CLI 作为后端）
+# LLM 配置（支持国内大模型 API，默认 DeepSeek）
 LLM_CONFIG = {
-    "model": "claude-sonnet-4-6",       # 使用的模型
+    "enabled": True,                     # 是否启用 LLM 分析
+    "model": "deepseek-chat",            # 使用的模型（DeepSeek / Qwen / GLM 等）
+    "api_key": "",                       # API Key（设置环境变量 LLM_API_KEY 更安全）
+    "api_base": "https://api.deepseek.com",  # API 地址
+    # 其他国内 API 地址：
+    # Qwen:  https://dashscope.aliyuncs.com/compatible-mode/v1
+    # GLM:   https://open.bigmodel.cn/api/paas/v4
+    # 月之暗面: https://api.moonshot.cn/v1
     "max_tokens": 8192,                  # 最大生成token
     "temperature": 0.1,                  # 分析任务使用低温度保证确定性
-    "agent_mode": True,                  # 启用 Agent 模式进行多步骤分析
+    "timeout": 120,                      # API 调用超时（秒）
 }
 
 # 扫描配置
