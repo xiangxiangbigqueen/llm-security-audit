@@ -301,6 +301,165 @@ VULN_CATEGORIES = {
         ],
         "risk_description": "攻击者可通过注入CRLF序列实现HTTP响应拆分、缓存投毒或XSS攻击"
     },
+    # ============================================================
+    # 第三批新增：12 种漏洞（总数达30类）
+    # ============================================================
+    "idor": {
+        "name": "不安全的直接对象引用 (IDOR)",
+        "severity": "中危",
+        "cwe": "CWE-639",
+        "patterns": [
+            r"""\.objects\.get\s*\(\s*["']\w+["']\s*=\s*request""",
+            r"""\.query\.filter_by\s*\(\s*\w+\s*=\s*request""",
+            r"""SELECT.*WHERE.*=\s*\$_(GET|POST)""",
+            r"""findById\s*\(\s*req\.params""",
+            r"""\.get\s*\(\s*request\.args""",
+        ],
+        "risk_description": "攻击者可修改资源ID参数访问其他用户的未授权数据"
+    },
+    "prototype_pollution": {
+        "name": "原型链污染 (Prototype Pollution)",
+        "severity": "高危",
+        "cwe": "CWE-1321",
+        "patterns": [
+            r"""\.assign\s*\(\s*.*__proto__""",
+            r"""\.merge\s*\(\s*.*constructor""",
+            r"""\[\s*['""]__proto__['""]\s*\]""",
+            r"""\.clone\s*\(\s*.*__proto__""",
+            r"""deepMerge.*__proto__""",
+            r"""extend\(true.*__proto__""",
+        ],
+        "risk_description": "攻击者可通过原型链污染实现属性注入，导致拒绝服务或远程代码执行"
+    },
+    "mass_assignment": {
+        "name": "批量赋值漏洞 (Mass Assignment)",
+        "severity": "中危",
+        "cwe": "CWE-915",
+        "patterns": [
+            r"""update_attributes\s*\(\s*params""",
+            r"""\.update\s*\(\s*request\.json""",
+            r"""\.update_all\s*\(\s*params""",
+            r"""fillable\s*=\s*\[""",
+            r"""@user\.update\(.*params""",
+            r"""User\.update\(.*request""",
+        ],
+        "risk_description": "攻击者可批量修改未授权的模型属性，提升权限或篡改关键数据"
+    },
+    "weak_crypto": {
+        "name": "弱加密算法",
+        "severity": "高危",
+        "cwe": "CWE-327",
+        "patterns": [
+            r"""hashlib\.md5\s*\(""",
+            r"""Cipher\.getInstance\(['""]DES['""]""",
+            r"""Cipher\.getInstance\(['""]RC4['""]""",
+            r"""sha1\s*\(""",
+            r"""Crypt::DES""",
+            r"""des\s*-\s*cbc""",
+            r"""md5\(.*password""",
+            r"""mysql_native_password""",
+        ],
+        "risk_description": "使用已被破解的加密算法（MD5、DES、RC4、SHA-1），可被攻击者逆向破解"
+    },
+    "certificate_vuln": {
+        "name": "不安全的证书验证",
+        "severity": "高危",
+        "cwe": "CWE-295",
+        "patterns": [
+            r"""verify=False""",
+            r"""ssl\._create_default_https_context""",
+            r"""check_hostname\s*=\s*False""",
+            r"""CERT_NONE""",
+            r"""\.context\.check_hostname\s*=\s*False""",
+            r"""REQUIRED""",
+            r"""ssl._create_unverified_context""",
+        ],
+        "risk_description": "禁用证书验证可能导致中间人攻击，通信数据被窃听或篡改"
+    },
+    "redos": {
+        "name": "正则表达式拒绝服务 (ReDoS)",
+        "severity": "中危",
+        "cwe": "CWE-1333",
+        "patterns": [
+            r"""\((.*[+*]){2,}\)""",
+            r"""\(\.\*\)\1""",
+            r"""\(\.\+\)\1""",
+            r"""[^.]*\(\.\*\.\*""",
+            r"""\((\w|\d)*\)\?\)\*""",
+        ],
+        "risk_description": "存在灾难性回溯的正则表达式，攻击者可构造特制输入导致CPU耗尽"
+    },
+    "memory_leak": {
+        "name": "内存泄漏/资源未释放",
+        "severity": "中危",
+        "cwe": "CWE-401",
+        "patterns": [
+            r"""open\(.*['""][^'""]*['""]\)\s*$""",
+            r"""FileInputStream""",
+            r"""BufferedReader.*open""",
+            r"""new\s+Thread\(\)""",
+            r"""\.connect\(\)""",
+            r"""malloc\(""",
+            r"""new\s+\w+\[""",
+        ],
+        "risk_description": "资源未正确释放可能导致内存耗尽，造成拒绝服务"
+    },
+    "race_condition": {
+        "name": "条件竞争/TOCTOU",
+        "severity": "高危",
+        "cwe": "CWE-367",
+        "patterns": [
+            r"""os\.path\.exists.*os\.(remove|unlink)""",
+            r"""if.*exists.*open""",
+            r"""if.*exists.*delete""",
+            r"""check.*write""",
+            r"""with\s+open\(\).*while""",
+        ],
+        "risk_description": "检查时间和使用时间之间存在窗口期，攻击者可利用竞争条件绕过安全检查"
+    },
+    "cleartext_storage": {
+        "name": "明文存储敏感信息",
+        "severity": "高危",
+        "cwe": "CWE-312",
+        "patterns": [
+            r"""password.*=\s*['""][^'""]+['""]""",
+            r"""credit_card""",
+            r"""ssn\s*="",
+            r"""phone.*=\s*['""]\d{11}['""]""",
+            r"""id_card""",
+            r"""bank_account""",
+            r"""passport_number""",
+        ],
+        "risk_description": "敏感信息（密码、身份证、银行卡号等）以明文存储，泄露后可造成严重损失"
+    },
+    "sqli_second_order": {
+        "name": "二阶SQL注入",
+        "severity": "高危",
+        "cwe": "CWE-89",
+        "patterns": [
+            r"""SELECT.*FROM.*WHERE.*\|""",
+            r"""SELECT.*FROM.*WHERE.*\+""",
+            r"""SELECT.*FROM.*WHERE.*%""",
+            r"""insert.*into.*values.*SELECT""",
+            r"""INSERT.*SELECT""",
+            r"""UPDATE.*SET.*=.*SELECT""",
+        ],
+        "risk_description": "攻击者可在首次请求中注入恶意数据，存储后触发二次查询时被利用"
+    },
+    "integer_overflow": {
+        "name": "整数溢出/环绕",
+        "severity": "中危",
+        "cwe": "CWE-190",
+        "patterns": [
+            r"""int\(.*input""",
+            r"""struct\.pack\s*\(\s*['""][iI]['""]""",
+            r"""\.bit_length\s*\(\s*\)""",
+            r"""ctypes\.c_int""",
+            r"""atoi\s*\(\s*\$""",
+            r"""intval\s*\(\s*\$""",
+        ],
+        "risk_description": "整数溢出可导致缓冲区溢出、逻辑错误或拒绝服务攻击"
+    },
 }
 
 # ============================================================

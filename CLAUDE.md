@@ -333,21 +333,23 @@ python main.py --target D:\Personal\Desktop\你的项目目录 --output reports
 | 1 | 支持 GitHub/GitLab URL | ✅ | [repo_manager.py:42-47](src/utils/repo_manager.py#L42) |
 | 2 | 自动识别编程语言 | ✅ | [repo_manager.py:108-136](src/utils/repo_manager.py#L108) |
 | 3 | 获取项目文件结构 | ✅ | [repo_manager.py:138-179](src/utils/repo_manager.py#L138) |
-| 4 | 多 Agent 协同（扫描/验证/报告） | ✅ | [main.py:100-139](main.py#L100) |
-| 5 | LLM 驱动代码分析 | ✅ | [scanner_agent.py:108-111](src/agents/scanner_agent.py#L108) |
-| 6 | SAST 静态分析（SQL注入等） | ✅ | [settings.py:48-147](config/settings.py#L48) |
+| 4 | 多 Agent 协同（扫描/验证/报告） | ✅ | [main.py:100-212](main.py#L100) |
+| 5 | LLM 驱动代码分析 | ✅ | DeepSeek API / [llm_api.py](src/analyzers/llm_api.py) |
+| 6 | SAST 静态分析（SQL注入等） | ✅ **30类漏洞** | [settings.py:48-400+](config/settings.py#L48) |
 | 7 | SAST 工具交叉验证 | ✅ | [verifier_agent.py:16-18](src/agents/verifier_agent.py#L16) |
-| 8 | MCP+Skills | ✅ | [SKILL.md:1-70](skills/SKILL.md) |
+| 8 | MCP+Skills | ✅ | [mcp_server.py](src/agents/mcp_server.py) + [SKILL.md](skills/SKILL.md) |
 | 9 | 漏洞自动验证 | ✅ | [verifier_agent.py:25-62](src/agents/verifier_agent.py#L25) |
-| 10 | 漏洞自动利用（PoC） | ✅ | [poc_generator.py:24-52](src/exploit/poc_generator.py#L24) |
-| 11 | 结构化报告 | ✅ | [report_generator.py:30-56](src/report/report_generator.py#L30) |
-| 12 | 关联 CWE 编号 | ✅ | [settings.py:48-147](config/settings.py#L48) |
+| 10 | 漏洞自动利用（PoC） | ✅ + 证据链 | [poc_generator.py](src/exploit/poc_generator.py) |
+| 11 | 结构化报告 | ✅ **增强HTML+图表** | [report_generator.py](src/report/report_generator.py) |
+| 12 | 关联 CWE 编号 | ✅ 全部漏洞关联 | [settings.py](config/settings.py) |
 | **新增** | 🌲 Tree-sitter AST 语义分析 | ✅ | [ast_analyzer.py](src/analyzers/ast_analyzer.py) |
 | **新增** | 📡 RAG-CVE 实时漏洞情报 | ✅ | [cve_rag.py](src/analyzers/cve_rag.py) |
 | **新增** | ⚡ 异步并行 Agent 编排 | ✅ | [orchestrator.py](src/agents/orchestrator.py) |
 | **新增** | 🌐 Flask Web 交互界面 | ✅ | [web/app.py](web/app.py) |
 | **新增** | 🤖 GitHub Actions CI/CD | ✅ | [.github/workflows/security-audit.yml](.github/workflows/security-audit.yml) |
 | **新增** | 🕸️ Neo4j 漏洞知识图谱 | ✅ | [graph_builder.py](src/analyzers/graph_builder.py) |
+| **新增** | 🛠️ MCP Server 工具链 | ✅ 11个工具 | [mcp_server.py](src/agents/mcp_server.py) |
+| **新增** | 📊 增强报告+Chart.js可视化 | ✅ | [report_generator.py:324-530](src/report/report_generator.py#L324) |
 
 ---
 
