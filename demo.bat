@@ -53,18 +53,44 @@ pause
 goto menu
 :scan_github
 cls
-echo [3] Enter GitHub URL:
+echo [3] Scan GitHub repository
+echo.
+echo Enter URL, or type 0 to go back:
 set /p repo_url=URL: 
 if "%repo_url%"=="" goto menu
+if "%repo_url%"=="0" goto menu
+if "%repo_url%"=="exit" goto menu
+echo.
+echo Scanning: %repo_url%
 python main.py --target "%repo_url%" --quick --output reports
+echo.
+echo Done! Select another option or 0 to exit.
 pause
 goto menu
 :scan_local
 cls
-echo [4] Enter local project path:
+echo [4] Scan local project
+echo.
+echo Enter folder path, or type 0 to go back:
 set /p local_path=Path: 
 if "%local_path%"=="" goto menu
+if "%local_path%"=="0" goto menu
+if "%local_path%"=="exit" goto menu
+if not exist "%local_path%" (
+    echo.
+    echo [ERROR] Path not found, please check and try again
+    echo Tips: Path examples -
+    echo   C:\Users8995\homomorphic_encryption
+    echo   D:\Personal\Desktop\your-project
+    echo.
+    pause
+    goto scan_local
+)
+echo.
+echo Scanning: %local_path%
 python main.py --target "%local_path%" --quick --output reports
+echo.
+echo Done!
 pause
 goto menu
 :web_ui
