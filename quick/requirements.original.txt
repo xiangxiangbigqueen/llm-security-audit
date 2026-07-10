@@ -1,0 +1,19 @@
+# LLM Security Audit System - 依赖清单
+# 实验一：大模型驱动的开源项目安全审计系统
+
+# 核心依赖
+requests>=2.31.0          # GitHub/GitLab API 调用 + LLM API 通信
+pyyaml>=6.0               # 配置文件解析
+jinja2>=3.1.0             # 报告模板引擎
+
+# 代码分析
+tree-sitter>=0.21.0       # 代码语法树解析（可选，增强SAST）
+
+# 报告生成
+markdown>=3.5.0           # 报告 markdown 渲染
+weasyprint>=60.0          # PDF 报告生成（可选）
+
+# 工具
+click>=8.1.0              # CLI 命令行接口
+colorama>=0.4.6           # 彩色终端输出
+rich>=13.0.0              # 富文本终端显示

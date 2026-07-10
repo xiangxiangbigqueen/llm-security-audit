@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Security Audit System - Web Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, 'Microsoft YaHei', sans-serif; background: #0f0f23; color: #e0e0e0; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; padding: 30px; border-bottom: 1px solid #2a2a4a; margin-bottom: 30px; }
+        .header h1 { font-size: 28px; background: linear-gradient(135deg, #00d4ff, #7b2ff7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header p { color: #888; margin-top: 8px; }
+        .scan-box { background: #1a1a3e; border-radius: 12px; padding: 24px; margin-bottom: 24px; border: 1px solid #2a2a4a; }
+        .scan-box h2 { margin-bottom: 16px; font-size: 18px; }
+        .input-group { display: flex; gap: 12px; }
+        .input-group input { flex: 1; padding: 12px 16px; border-radius: 8px; border: 1px solid #3a3a5a; background: #0f0f23; color: #e0e0e0; font-size: 14px; }
+        .input-group button { padding: 12px 24px; border-radius: 8px; border: none; background: linear-gradient(135deg, #00d4ff, #7b2ff7); color: #fff; font-size: 14px; cursor: pointer; font-weight: 600; }
+        .input-group button:hover { opacity: 0.9; }
+        .input-group button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: #1a1a3e; border-radius: 12px; padding: 20px; text-align: center; border: 1px solid #2a2a4a; }
+        .stat-card .number { font-size: 36px; font-weight: bold; }
+        .stat-card .label { font-size: 13px; color: #888; margin-top: 4px; }
+        .stat-card.critical { border-color: #dc3545; } .stat-card.critical .number { color: #dc3545; }
+        .stat-card.high { border-color: #fd7e14; } .stat-card.high .number { color: #fd7e14; }
+        .stat-card.medium { border-color: #ffc107; } .stat-card.medium .number { color: #ffc107; }
+        .stat-card.low { border-color: #28a745; } .stat-card.low .number { color: #28a745; }
+        .results { background: #1a1a3e; border-radius: 12px; padding: 24px; border: 1px solid #2a2a4a; }
+        .finding { padding: 16px; margin-bottom: 12px; border-radius: 8px; border-left: 4px solid #555; background: #0f0f23; }
+        .finding.critical { border-color: #dc3545; }
+        .finding.high { border-color: #fd7e14; }
+        .finding.medium { border-color: #ffc107; }
+        .finding.low { border-color: #28a745; }
+        .finding-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .finding .file { font-family: monospace; font-size: 12px; color: #888; }
+        .finding .match { font-family: monospace; font-size: 12px; background: #1a1a2e; padding: 8px; border-radius: 4px; margin-top: 8px; overflow-x: auto; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; background: #333; color: #fff; }
+        .tag.critical { background: #dc3545; }
+        .tag.high { background: #fd7e14; }
+        .tag.medium { background: #ffc107; color: #333; }
+        .tag.low { background: #28a745; }
+        .history { margin-top: 16px; }
+        .history table { width: 100%; border-collapse: collapse; }
+        .history th, .history td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #2a2a4a; font-size: 13px; }
+        .history th { color: #888; font-weight: 600; }
+        #loading { display: none; text-align: center; padding: 40px; }
+        #loading .spinner { display: inline-block; width: 40px; height: 40px; border: 3px solid #2a2a4a; border-top: 3px solid #00d4ff; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .reports { margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+        .reports a { padding: 8px 16px; border-radius: 6px; background: #2a2a4a; color: #00d4ff; text-decoration: none; font-size: 13px; }
+        .reports a:hover { background: #3a3a5a; }
+        .chart-container { height: 250px; margin-top: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔒 LLM Security Audit System</h1>
+            <p>大模型驱动的开源项目安全审计 · Web 仪表盘</p>
+        </div>
+
+        <div class="scan-box">
+            <h2>🎯 启动新扫描</h2>
+            <div class="input-group">
+                <input type="text" id="target-input" placeholder="输入 GitHub URL 或本地路径... 例如: https://github.com/user/repo.git 或 D:/projects/myapp">
+                <button id="scan-btn" onclick="startScan()">🚀 开始扫描</button>
+            </div>
+        </div>
+
+        <div id="loading">
+            <div class="spinner"></div>
+            <p style="margin-top: 16px;">扫描进行中，请稍候...</p>
+        </div>
+
+        <div id="results" style="display:none;">
+            <div class="grid" id="stats-grid"></div>
+
+            <div class="results">
+                <h2>📊 漏洞分类统计</h2>
+                <div class="chart-container">
+                    <canvas id="chart"></canvas>
+                </div>
+            </div>
+
+            <div class="results" style="margin-top: 16px;">
+                <h2>🐛 漏洞详情</h2>
+                <div id="findings-list"></div>
+                <div class="reports" id="reports-list"></div>
+            </div>
+        </div>
+
+        <div class="results" style="margin-top: 24px;">
+            <h2>📜 扫描历史</h2>
+            <div class="history">
+                <table>
+                    <thead><tr><th>时间</th><th>目标</th><th>发现漏洞</th></tr></thead>
+                    <tbody id="history-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chartInstance = null;
+
+        function startScan() {
+            const target = document.getElementById('target-input').value.trim();
+            if (!target) { alert('请输入目标路径或 URL'); return; }
+
+            document.getElementById('scan-btn').disabled = true;
+            document.getElementById('scan-btn').textContent = '⏳ 扫描中...';
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results').style.display = 'none';
+
+            fetch('/scan', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({target: target})
+            }).then(r => r.json()).then(data => {
+                pollStatus();
+            });
+        }
+
+        function pollStatus() {
+            const check = setInterval(() => {
+                fetch('/status').then(r => r.json()).then(data => {
+                    if (data.status === 'done' && data.data) {
+                        clearInterval(check);
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('scan-btn').disabled = false;
+                        document.getElementById('scan-btn').textContent = '🚀 开始扫描';
+                        showResults(data.data);
+                    }
+                });
+            }, 1000);
+            setTimeout(() => {
+                clearInterval(check);
+                document.getElementById('scan-btn').disabled = false;
+                document.getElementById('scan-btn').textContent = '🚀 开始扫描';
+            }, 120000);
+        }
+
+        function showResults(data) {
+            document.getElementById('results').style.display = 'block';
+            const findings = data.findings || [];
+            const projectInfo = data.project_info || {};
+
+            // 统计严重程度
+            const sevCount = {critical: 0, high: 0, medium: 0, low: 0};
+            findings.forEach(f => {
+                const s = (f.severity || '').toLowerCase();
+                if (s.includes('高危') || s === 'critical') sevCount.critical++;
+                else if (s.includes('中危') || s === 'high') sevCount.high++;
+                else if (s.includes('低危') || s === 'medium') sevCount.medium++;
+                else sevCount.low++;
+            });
+
+            // 统计卡片
+            document.getElementById('stats-grid').innerHTML = `
+                <div class="stat-card critical">
+                    <div class="number">${sevCount.critical}</div>
+                    <div class="label">🔴 高危</div>
+                </div>
+                <div class="stat-card high">
+                    <div class="number">${sevCount.high}</div>
+                    <div class="label">🟡 中危</div>
+                </div>
+                <div class="stat-card medium">
+                    <div class="number">${sevCount.medium}</div>
+                    <div class="label">🟢 低危</div>
+                </div>
+                <div class="stat-card low">
+                    <div class="number">${sevCount.low}</div>
+                    <div class="label">🔵 信息</div>
+                </div>
+                <div class="stat-card" style="border-color: #00d4ff;">
+                    <div class="number" style="color: #00d4ff;">${data.files_scanned || 0}</div>
+                    <div class="label">📁 扫描文件</div>
+                </div>
+                <div class="stat-card" style="border-color: #7b2ff7;">
+                    <div class="number" style="color: #7b2ff7;">${projectInfo.name || 'N/A'}</div>
+                    <div class="label">📂 项目名称</div>
+                </div>
+            `;
+
+            // 图表
+            const ctx = document.getElementById('chart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+
+            const typeCount = {};
+            findings.forEach(f => {
+                const name = f.vuln_name || '未知';
+                typeCount[name] = (typeCount[name] || 0) + 1;
+            });
+
+            chartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(typeCount),
+                    datasets: [{
+                        data: Object.values(typeCount),
+                        backgroundColor: ['#dc3545', '#fd7e14', '#ffc107', '#28a745', '#0d6efd', '#6f42c1', '#20c997'],
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right', labels: { color: '#e0e0e0' } }
+                    }
+                }
+            });
+
+            // 漏洞列表
+            let findingsHtml = '';
+            findings.forEach(f => {
+                const sevClass = (f.severity || '').includes('高危') ? 'critical' :
+                                (f.severity || '').includes('中危') ? 'high' :
+                                (f.severity || '').includes('低危') ? 'medium' : 'low';
+                findingsHtml += `
+                    <div class="finding ${sevClass}">
+                        <div class="finding-header">
+                            <div>
+                                <strong>${f.vuln_name || '未知'}</strong>
+                                <span class="file">${f.file || ''}:${f.line || ''}</span>
+                            </div>
+                            <span class="tag ${sevClass}">${f.severity || '信息'}</span>
+                        </div>
+                        <div style="font-size: 13px; color: #aaa;">${f.risk_description || ''}</div>
+                        ${f.match ? `<div class="match">${escapeHtml(f.match)}</div>` : ''}
+                        ${f.fix_suggestion ? `<div style="margin-top: 8px; font-size: 13px; color: #28a745;">💡 ${escapeHtml(f.fix_suggestion)}</div>` : ''}
+                    </div>
+                `;
+            });
+            document.getElementById('findings-list').innerHTML = findingsHtml || '<p style="color: #28a745;">✅ 未发现安全问题</p>';
+
+            // 报告链接
+            const reports = data.reports || [];
+            if (reports.length) {
+                let reportsHtml = '<strong>📄 报告下载:</strong> ';
+                reports.forEach(r => {
+                    const name = r.split('/').pop() || r;
+                    reportsHtml += `<a href="/report/${encodeURIComponent(name)}" target="_blank">📄 ${name}</a>`;
+                });
+                document.getElementById('reports-list').innerHTML = reportsHtml;
+            }
+
+            // 刷新历史
+            fetch('/api/history').then(r => r.json()).then(h => {
+                const tbody = document.getElementById('history-body');
+                tbody.innerHTML = h.reverse().map(item => `
+                    <tr><td>${item.time}</td><td>${item.target}</td><td>${item.findings}</td></tr>
+                `).join('');
+            });
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                       .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+
+        // 初始加载历史
+        fetch('/api/history').then(r => r.json()).then(h => {
+            const tbody = document.getElementById('history-body');
+            tbody.innerHTML = h.reverse().map(item => `
+                <tr><td>${item.time}</td><td>${item.target}</td><td>${item.findings}</td></tr>
+            `).join('');
+        });
+    </script>
+</body>
+</html>
