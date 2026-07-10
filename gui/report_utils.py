@@ -14,9 +14,15 @@
 """
 import os
 import re
+import sys
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# exe 模式下报告生成在 exe 同目录，开发模式下生成在项目根目录
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
 REPORTS_DIR = BASE_DIR / "reports"
 
 
