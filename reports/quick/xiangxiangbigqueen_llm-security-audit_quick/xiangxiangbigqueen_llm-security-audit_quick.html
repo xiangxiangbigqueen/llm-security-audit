@@ -1,0 +1,2379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Audit Report - xiangxiangbigqueen_llm-security-audit</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, 'Microsoft YaHei', 'Segoe UI', sans-serif; background: #0f0f23; color: #e0e0e0; }
+        .container { max-width: 1300px; margin: 0 auto; padding: 20px; }
+
+        /* Navigation */
+        .nav { position: sticky; top: 0; z-index: 100; background: #1a1a3e; border-bottom: 1px solid #2a2a4a; padding: 8px 20px; margin: -20px -20px 20px; display: flex; gap: 8px; flex-wrap: wrap; }
+        .nav a { color: #888; text-decoration: none; font-size: 12px; padding: 6px 12px; border-radius: 4px; }
+        .nav a:hover { color: #00d4ff; background: #2a2a4a; }
+        .nav .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; margin-left: 4px; }
+
+        /* Header */
+        .header { background: linear-gradient(135deg, #1a1a2e, #16213e); border: 1px solid #2a2a4a; border-radius: 16px; padding: 30px 40px; margin-bottom: 24px; }
+        .header h1 { font-size: 28px; background: linear-gradient(135deg, #00d4ff, #7b2ff7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header .meta { margin-top: 12px; font-size: 13px; color: #888; display: flex; flex-wrap: wrap; gap: 16px; }
+
+        /* Risk Score */
+        .risk-meter { display: flex; align-items: center; gap: 16px; padding: 16px; border-radius: 10px; margin-bottom: 16px; background: #0f0f23; border: 1px solid #2a2a4a; }
+        .risk-score { font-size: 48px; font-weight: bold; line-height: 1; }
+        .risk-score.critical { color: #dc3545; }
+        .risk-score.high { color: #fd7e14; }
+        .risk-score.medium { color: #ffc107; }
+        .risk-score.low { color: #28a745; }
+        .risk-detail { font-size: 13px; color: #aaa; }
+        .risk-bar { flex: 1; height: 8px; border-radius: 4px; background: #2a2a4a; overflow: hidden; }
+        .risk-bar-fill { height: 100%; border-radius: 4px; transition: width 1s; }
+
+        /* Cards */
+        .card { background: #1a1a3e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 24px; margin-bottom: 16px; }
+        .card h2 { font-size: 18px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #2a2a4a; color: #00d4ff; }
+        .card h3 { font-size: 15px; margin: 16px 0 8px; color: #e0e0e0; }
+
+        /* Summary Grid */
+        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+        .stat-card { text-align: center; padding: 16px 10px; border-radius: 10px; }
+        .stat-card.critical { background: rgba(220,53,69,0.15); border: 1px solid rgba(220,53,69,0.3); }
+        .stat-card.high { background: rgba(253,126,20,0.15); border: 1px solid rgba(253,126,20,0.3); }
+        .stat-card.medium { background: rgba(255,193,7,0.15); border: 1px solid rgba(255,193,7,0.3); }
+        .stat-card.low { background: rgba(40,167,69,0.15); border: 1px solid rgba(40,167,69,0.3); }
+        .stat-card.info { background: rgba(13,110,253,0.15); border: 1px solid rgba(13,110,253,0.3); }
+        .stat-card.total { background: rgba(108,117,125,0.15); border: 1px solid rgba(108,117,125,0.3); }
+        .stat-number { font-size: 32px; font-weight: bold; }
+        .stat-card.critical .stat-number { color: #dc3545; }
+        .stat-card.high .stat-number { color: #fd7e14; }
+        .stat-card.medium .stat-number { color: #ffc107; }
+        .stat-card.low .stat-number { color: #28a745; }
+        .stat-card.info .stat-number { color: #0d6efd; }
+        .stat-card.total .stat-number { color: #6c757d; }
+        .stat-label { font-size: 11px; color: #888; margin-top: 4px; }
+
+        /* Info Table */
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; font-size: 13px; }
+        .info-grid .label { color: #888; }
+        .info-grid .value { color: #e0e0e0; }
+        .info-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #2a2a4a; }
+
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #2a2a4a; }
+        th { color: #888; font-weight: 600; font-size: 11px; text-transform: uppercase; cursor: pointer; }
+        th:hover { color: #00d4ff; }
+        tr:hover { background: rgba(255,255,255,0.02); }
+
+        /* Tags */
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .tag.critical { background: #dc3545; color: white; }
+        .tag.high { background: #fd7e14; color: white; }
+        .tag.medium { background: #ffc107; color: #333; }
+        .tag.low { background: #28a745; color: white; }
+        .tag.cwe { background: #6f42c1; color: white; }
+        .tag.info { background: #2a2a4a; color: #aaa; }
+
+        /* Findings */
+        .finding { border: 1px solid #2a2a4a; border-left: 4px solid #555; margin-bottom: 12px; border-radius: 0 10px 10px 0; background: #0f0f23; }
+        .finding-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; cursor: pointer; }
+        .finding-header:hover { background: rgba(255,255,255,0.02); }
+        .finding.critical { border-left-color: #dc3545; }
+        .finding.high { border-left-color: #fd7e14; }
+        .finding.medium { border-left-color: #ffc107; }
+        .finding.low { border-left-color: #28a745; }
+        .finding-title { font-size: 14px; font-weight: 600; }
+        .finding-file { font-family: 'Courier New', monospace; font-size: 11px; color: #666; margin-left: 8px; }
+        .finding-body { padding: 0 16px 16px; display: none; }
+        .finding-body.open { display: block; }
+
+        /* Code block */
+        .code-block { background: #0a0a1a; border: 1px solid #2a2a4a; border-radius: 8px; overflow: hidden; margin-top: 8px; }
+        .code-block .code-header { padding: 6px 12px; background: #1a1a3e; font-size: 11px; color: #888; border-bottom: 1px solid #2a2a4a; }
+        .code-block pre { padding: 12px; overflow-x: auto; font-size: 12px; line-height: 1.5; font-family: 'Courier New', monospace; margin: 0; }
+        .code-block .hl { background: rgba(220,53,69,0.15); display: block; }
+
+        /* Evidence */
+        .evidence { background: #0a0a1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 12px; margin-top: 8px; }
+        .evidence-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+        .ev-item { padding: 8px; border-radius: 6px; background: #1a1a3e; font-size: 12px; }
+        .ev-item .ev-label { color: #888; font-size: 11px; }
+        .ev-item .ev-value { color: #e0e0e0; font-weight: 600; }
+        .path-step { padding: 3px 0; font-size: 12px; border-left: 2px solid #2a2a4a; padding-left: 10px; margin: 2px 0; }
+        .path-step:hover { border-left-color: #00d4ff; background: rgba(0,212,255,0.05); }
+
+        /* Flow chart */
+        .flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px; background: #1a1a3e; border-radius: 8px; margin-top: 8px; font-size: 12px; }
+        .flow-node { padding: 4px 10px; border-radius: 4px; background: #2a2a4a; }
+        .flow-node.source { background: rgba(220,53,69,0.2); border: 1px solid rgba(220,53,69,0.3); }
+        .flow-node.sink { background: rgba(253,126,20,0.2); border: 1px solid rgba(253,126,20,0.3); }
+        .flow-arrow { color: #555; }
+
+        /* Download bar */
+        .download-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+        .download-btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #2a2a4a; background: #1a1a3e; color: #e0e0e0; text-decoration: none; font-size: 13px; }
+        .download-btn:hover { border-color: #00d4ff; color: #00d4ff; }
+
+        /* Tabs */
+        .tabs { display: flex; gap: 2px; margin-bottom: 12px; }
+        .tab { padding: 8px 16px; border-radius: 6px 6px 0 0; background: #1a1a3e; border: 1px solid #2a2a4a; cursor: pointer; font-size: 12px; color: #888; }
+        .tab.active { background: #0f0f23; color: #00d4ff; border-bottom-color: #0f0f23; }
+        .tab:hover { color: #e0e0e0; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Filter Bar */
+        .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+        .filter-btn { padding: 4px 12px; border-radius: 12px; border: 1px solid #2a2a4a; background: transparent; color: #888; cursor: pointer; font-size: 12px; }
+        .filter-btn:hover { border-color: #555; color: #e0e0e0; }
+        .filter-btn.active { border-color: #00d4ff; color: #00d4ff; background: rgba(0,212,255,0.1); }
+
+        /* Chart containers */
+        .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .chart-box { height: 220px; }
+
+        /* Footer */
+        .footer { text-align: center; padding: 20px; color: #555; font-size: 12px; }
+
+        /* Search */
+        .search-box { padding: 8px 12px; border-radius: 6px; border: 1px solid #2a2a4a; background: #0f0f23; color: #e0e0e0; font-size: 13px; width: 200px; }
+        .search-box:focus { outline: none; border-color: #00d4ff; }
+
+        @media (max-width: 768px) {
+            .chart-row { grid-template-columns: 1fr; }
+            .evidence-grid { grid-template-columns: 1fr; }
+            .info-grid { grid-template-columns: 1fr; }
+            .summary-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="#summary">Summary</a>
+        <a href="#risk">Risk</a>
+        <a href="#distribution">Distribution</a>
+        <a href="#files">Files</a>
+        <a href="#findings">Findings <span class="badge" style="background:#dc3545;">38</span></a>
+        <a href="#remediation">Remediation</a>
+        <a href="#about">About</a>
+    </div>
+
+    <div class="container">
+        <!-- Header -->
+        <div class="header" id="summary">
+            <h1>&#128274; Security Audit Report</h1>
+            <div class="meta">
+                <span><strong>Project:</strong> xiangxiangbigqueen_llm-security-audit</span>
+                <span><strong>Scan:</strong> </span>
+                <span><strong>Tool:</strong> LLM Security Audit System v1.0.0</span>
+                <span><strong>Source:</strong> https://github.com/xiangxiangbigqueen/llm-security-audit.git</span>
+                <span><strong>Findings:</strong> 52</span>
+            </div>
+        </div>
+
+        <!-- Download Bar -->
+        <div class="download-bar">
+            <span style="color:#888;font-size:13px;padding:8px 0;">Download / 下载:</span>
+            <a class="download-btn" href="xiangxiangbigqueen_llm-security-audit_quick.md" target="_blank">&#128196; Markdown</a>
+            <a class="download-btn" href="xiangxiangbigqueen_llm-security-audit_quick.json" target="_blank">&#128200; JSON</a>
+            <span style="color:#888;font-size:12px;padding:8px 0;margin-left:auto;">52 findings (38 critical, 14 high, 0 medium, 0 info)</span>
+        </div>
+
+        <!-- Risk Score -->
+        <div class="card" id="risk">
+            <h2>&#127919; Risk Assessment / 风险评估</h2>
+            <div class="risk-meter">
+                <div>
+                    <div class="risk-score critical">100</div>
+                    <div style="font-size:12px;color:#888;">CRITICAL / 严重</div>
+                </div>
+                <div style="flex:1;">
+                    <div class="risk-bar"><div class="risk-bar-fill critical" style="width:100%;"></div></div>
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:#555;margin-top:4px;">
+                        <span>Low / 低</span>
+                        <span>Medium / 中</span>
+                        <span>High / 高</span>
+                        <span>Critical / 严重</span>
+                    </div>
+                </div>
+                <div class="risk-detail">
+                    <div>&#128337; Files: 25</div>
+                    <div>&#128220; Findings: 52</div>
+                    <div>&#9888;&#65039; Critical: 38</div>
+                </div>
+            </div>
+
+            <div class="summary-grid">
+                <div class="stat-card critical">
+                    <div class="stat-number">38</div>
+                    <div class="stat-label">Critical / 高危</div>
+                </div>
+                <div class="stat-card high">
+                    <div class="stat-number">14</div>
+                    <div class="stat-label">High / 中危</div>
+                </div>
+                <div class="stat-card medium">
+                    <div class="stat-number">0</div>
+                    <div class="stat-label">Medium / 低危</div>
+                </div>
+                <div class="stat-card low">
+                    <div class="stat-number">0</div>
+                    <div class="stat-label">Info / 信息</div>
+                </div>
+                <div class="stat-card info">
+                    <div class="stat-number">25</div>
+                    <div class="stat-label">Files / 文件</div>
+                </div>
+                <div class="stat-card total">
+                    <div class="stat-number">52</div>
+                    <div class="stat-label">Total / 总计</div>
+                </div>
+            </div>
+
+            <div class="info-grid" style="margin-top:12px;">
+                <div class="info-row"><span class="label">Project</span><span class="value">xiangxiangbigqueen_llm-security-audit</span></div>
+                <div class="info-row"><span class="label">Source</span><span class="value">https://github.com/xiangxiangbigqueen/llm-security-audit.git</span></div>
+                <div class="info-row"><span class="label">Languages</span><span class="value">python</span></div>
+                <div class="info-row"><span class="label">Severity Distribution</span><span class="value">38C / 14H / 0M / 0I</span></div>
+                <div class="info-row"><span class="label">Scan Duration</span><span class="value">0s</span></div>
+                <div class="info-row"><span class="label">Risk Score</span><span class="value">100/100 (CRITICAL / 严重)</span></div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="card" id="distribution">
+            <h2>&#128202; Vulnerability Distribution / 漏洞分布</h2>
+            <div class="chart-row">
+                <div class="chart-box"><canvas id="severityChart"></canvas></div>
+                <div class="chart-box"><canvas id="typeChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- File Breakdown -->
+        <div class="card" id="files">
+            <h2>&#128193; File Breakdown / 文件分析</h2>
+            <table><tr><th>File / 文件</th><th>Findings / 发现数</th><th>Files / 占比</th></tr><tr><td style="font-family:monospace;font-size:12px;">config\settings.py</td><td>38</td><td>73%</td></tr><tr><td style="font-family:monospace;font-size:12px;">tests\vulnerable_app.py</td><td>7</td><td>13%</td></tr><tr><td style="font-family:monospace;font-size:12px;">src\exploit\poc_generator.py</td><td>4</td><td>8%</td></tr><tr><td style="font-family:monospace;font-size:12px;">src\analyzers\ast_analyzer.py</td><td>2</td><td>4%</td></tr><tr><td style="font-family:monospace;font-size:12px;">src\analyzers\cve_rag.py</td><td>1</td><td>2%</td></tr></table>
+        </div>
+
+        <!-- All Findings Table -->
+        <div class="card">
+            <h2>&#128203; Findings Summary / 发现汇总</h2>
+            <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input class="search-box" id="searchInput" placeholder="Search / 搜索..." onkeyup="filterTable()">
+                <button class="filter-btn active" onclick="filterSeverity(this,'all')" id="f-all">All</button>
+                <button class="filter-btn" onclick="filterSeverity(this,'critical')" id="f-critical">Critical</button>
+                <button class="filter-btn" onclick="filterSeverity(this,'high')" id="f-high">High</button>
+                <button class="filter-btn" onclick="filterSeverity(this,'medium')" id="f-medium">Medium</button>
+                <button class="filter-btn" onclick="filterSeverity(this,'low')" id="f-low">Low</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table id="findingsTable">
+                    <thead><tr>
+                        <th onclick="sortTable(0)">ID</th>
+                        <th onclick="sortTable(1)">Severity / 等级</th>
+                        <th onclick="sortTable(2)">Type / 类型</th>
+                        <th onclick="sortTable(3)">File / 文件</th>
+                        <th onclick="sortTable(4)">Line / 行</th>
+                        <th onclick="sortTable(5)">CWE</th>
+                        <th onclick="sortTable(6)">Status</th>
+                    </tr></thead>
+                    <tbody id="findingsTableBody">
+                        
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">sql_injection-1</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>SQL注入</td>
+                    <td style="font-family:monospace;font-size:12px;">tests\vulnerable_app.py</td>
+                    <td>41</td>
+                    <td><span class="tag cwe">CWE-89</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">hardcoded_secret-2</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>硬编码密钥/凭证</td>
+                    <td style="font-family:monospace;font-size:12px;">tests\vulnerable_app.py</td>
+                    <td>84</td>
+                    <td><span class="tag cwe">CWE-798</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">hardcoded_secret-3</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>硬编码密钥/凭证</td>
+                    <td style="font-family:monospace;font-size:12px;">tests\vulnerable_app.py</td>
+                    <td>88</td>
+                    <td><span class="tag cwe">CWE-798</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">hardcoded_secret-4</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>硬编码密钥/凭证</td>
+                    <td style="font-family:monospace;font-size:12px;">tests\vulnerable_app.py</td>
+                    <td>90</td>
+                    <td><span class="tag cwe">CWE-798</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">insecure_deserialization-7</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>不安全反序列化</td>
+                    <td style="font-family:monospace;font-size:12px;">tests\vulnerable_app.py</td>
+                    <td>101</td>
+                    <td><span class="tag cwe">CWE-502</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">ssti-8</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>服务端模板注入 (SSTI)</td>
+                    <td style="font-family:monospace;font-size:12px;">tests\vulnerable_app.py</td>
+                    <td>115</td>
+                    <td><span class="tag cwe">CWE-1336</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">sqli_second_order-9</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>二阶SQL注入</td>
+                    <td style="font-family:monospace;font-size:12px;">tests\vulnerable_app.py</td>
+                    <td>41</td>
+                    <td><span class="tag cwe">CWE-89</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">sql_injection-11</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>SQL注入</td>
+                    <td style="font-family:monospace;font-size:12px;">src\analyzers\ast_analyzer.py</td>
+                    <td>143</td>
+                    <td><span class="tag cwe">CWE-89</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">xxe-18</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>XML外部实体注入 (XXE)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>170</td>
+                    <td><span class="tag cwe">CWE-611</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">xxe-19</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>XML外部实体注入 (XXE)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>173</td>
+                    <td><span class="tag cwe">CWE-611</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">xxe-20</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>XML外部实体注入 (XXE)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>175</td>
+                    <td><span class="tag cwe">CWE-611</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">ldap_injection-27</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>LDAP注入</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>216</td>
+                    <td><span class="tag cwe">CWE-90</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">ldap_injection-28</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>LDAP注入</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>217</td>
+                    <td><span class="tag cwe">CWE-90</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">ssti-29</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>服务端模板注入 (SSTI)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>240</td>
+                    <td><span class="tag cwe">CWE-1336</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">insecure_upload-30</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>不安全文件上传</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>258</td>
+                    <td><span class="tag cwe">CWE-434</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">jwt_vuln-31</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>JWT安全漏洞</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>272</td>
+                    <td><span class="tag cwe">CWE-347</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">crlf_injection-32</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>CRLF注入/HTTP响应拆分</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>300</td>
+                    <td><span class="tag cwe">CWE-93</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">prototype_pollution-33</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>原型链污染 (Prototype Pollution)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>329</td>
+                    <td><span class="tag cwe">CWE-1321</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">weak_crypto-34</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>弱加密算法</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>357</td>
+                    <td><span class="tag cwe">CWE-327</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">weak_crypto-35</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>弱加密算法</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>360</td>
+                    <td><span class="tag cwe">CWE-327</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">certificate_vuln-36</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>不安全的证书验证</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>269</td>
+                    <td><span class="tag cwe">CWE-295</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">certificate_vuln-37</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>不安全的证书验证</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>369</td>
+                    <td><span class="tag cwe">CWE-295</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">certificate_vuln-38</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>不安全的证书验证</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>372</td>
+                    <td><span class="tag cwe">CWE-295</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">certificate_vuln-39</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>不安全的证书验证</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>374</td>
+                    <td><span class="tag cwe">CWE-295</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">certificate_vuln-40</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>不安全的证书验证</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>375</td>
+                    <td><span class="tag cwe">CWE-295</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">race_condition-43</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>条件竞争/TOCTOU</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>413</td>
+                    <td><span class="tag cwe">CWE-367</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">race_condition-44</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>条件竞争/TOCTOU</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>414</td>
+                    <td><span class="tag cwe">CWE-367</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">race_condition-45</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>条件竞争/TOCTOU</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>415</td>
+                    <td><span class="tag cwe">CWE-367</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">cleartext_storage-46</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>明文存储敏感信息</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>426</td>
+                    <td><span class="tag cwe">CWE-312</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">cleartext_storage-47</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>明文存储敏感信息</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>429</td>
+                    <td><span class="tag cwe">CWE-312</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">cleartext_storage-48</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>明文存储敏感信息</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>430</td>
+                    <td><span class="tag cwe">CWE-312</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">cleartext_storage-49</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>明文存储敏感信息</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>431</td>
+                    <td><span class="tag cwe">CWE-312</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">sqli_second_order-50</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>二阶SQL注入</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>440</td>
+                    <td><span class="tag cwe">CWE-89</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">sqli_second_order-51</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>二阶SQL注入</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>441</td>
+                    <td><span class="tag cwe">CWE-89</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">sqli_second_order-52</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>二阶SQL注入</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>442</td>
+                    <td><span class="tag cwe">CWE-89</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">sqli_second_order-53</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>二阶SQL注入</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>443</td>
+                    <td><span class="tag cwe">CWE-89</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">sqli_second_order-54</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>二阶SQL注入</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>444</td>
+                    <td><span class="tag cwe">CWE-89</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="critical">
+                    <td style="font-size:11px;color:#666;">sqli_second_order-55</td>
+                    <td><span class="tag critical">高危</span></td>
+                    <td>二阶SQL注入</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>445</td>
+                    <td><span class="tag cwe">CWE-89</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">redos-10</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>正则表达式拒绝服务 (ReDoS)</td>
+                    <td style="font-family:monospace;font-size:12px;">src\analyzers\cve_rag.py</td>
+                    <td>162</td>
+                    <td><span class="tag cwe">CWE-1333</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">xss-12</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>跨站脚本 (XSS)</td>
+                    <td style="font-family:monospace;font-size:12px;">src\analyzers\ast_analyzer.py</td>
+                    <td>205</td>
+                    <td><span class="tag cwe">CWE-79</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">path_traversal-13</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>路径遍历</td>
+                    <td style="font-family:monospace;font-size:12px;">src\exploit\poc_generator.py</td>
+                    <td>217</td>
+                    <td><span class="tag cwe">CWE-22</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">path_traversal-14</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>路径遍历</td>
+                    <td style="font-family:monospace;font-size:12px;">src\exploit\poc_generator.py</td>
+                    <td>218</td>
+                    <td><span class="tag cwe">CWE-22</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">path_traversal-15</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>路径遍历</td>
+                    <td style="font-family:monospace;font-size:12px;">src\exploit\poc_generator.py</td>
+                    <td>219</td>
+                    <td><span class="tag cwe">CWE-22</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">integer_overflow-16</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>整数溢出/环绕</td>
+                    <td style="font-family:monospace;font-size:12px;">src\exploit\poc_generator.py</td>
+                    <td>531</td>
+                    <td><span class="tag cwe">CWE-190</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">xss-17</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>跨站脚本 (XSS)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>126</td>
+                    <td><span class="tag cwe">CWE-79</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">csrf-21</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>跨站请求伪造 (CSRF)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>184</td>
+                    <td><span class="tag cwe">CWE-352</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">csrf-23</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>跨站请求伪造 (CSRF)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>185</td>
+                    <td><span class="tag cwe">CWE-352</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">csrf-24</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>跨站请求伪造 (CSRF)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>187</td>
+                    <td><span class="tag cwe">CWE-352</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">csrf-25</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>跨站请求伪造 (CSRF)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>188</td>
+                    <td><span class="tag cwe">CWE-352</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">csrf-26</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>跨站请求伪造 (CSRF)</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>189</td>
+                    <td><span class="tag cwe">CWE-352</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">memory_leak-41</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>内存泄漏/资源未释放</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>398</td>
+                    <td><span class="tag cwe">CWE-401</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                <tr data-severity="high">
+                    <td style="font-size:11px;color:#666;">memory_leak-42</td>
+                    <td><span class="tag high">中危</span></td>
+                    <td>内存泄漏/资源未释放</td>
+                    <td style="font-family:monospace;font-size:12px;">config\settings.py</td>
+                    <td>399</td>
+                    <td><span class="tag cwe">CWE-401</span></td>
+                    <td><span class="status ok">Confirmed</span></td>
+                </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Detailed Findings -->
+        <div class="card" id="findings">
+            <h2>&#128270; Detailed Findings / 漏洞详情</h2>
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab(this,'card')">Card View / 卡片</div>
+                <div class="tab" onclick="switchTab(this,'list')">List View / 列表</div>
+            </div>
+            <h3 style='margin-top: 20px;'><span class='tag critical'>CRITICAL</span> (38 findings)</h3>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">SQL注入</div>
+                            <div class="finding-file">tests\vulnerable_app.py:41</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-89</span>
+                        <span class="tag scope">pattern_match+llm_api</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可通过构造恶意SQL语句操纵数据库，导致数据泄露、篡改或删除</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>cursor.execute(f&quot;</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     39</span>     cursor = conn.cursor()</div><div><span class="line-num">     40</span>     # 漏洞: 拼接用户输入</div><div><span class="line-num"> &gt;&gt;&gt; 41</span>     cursor.execute(f&quot;SELECT * FROM users WHERE name LIKE &#x27;%{keyword}%&#x27;&quot;)  # SQL 注入!</div><div><span class="line-num">     42</span>     return str(cursor.fetchall())</div><div><span class="line-num">     43</span> </div>
+                    </div>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #00d4ff; font-size: 13px; font-weight: 600;">Evidence Chain / 证据链</summary>
+                        <div class="evidence">
+                            <div class="evidence-grid">
+                                <div class="evidence-item"><span class="label">File / 文件</span><br><span class="value">tests\vulnerable_app.py</span></div>
+                                <div class="evidence-item"><span class="label">Line / 行号</span><br><span class="value">41</span></div>
+                                <div class="evidence-item"><span class="label">Verified / 验证</span><br><span class="value">Confirmed</span></div>
+                                <div class="evidence-item"><span class="label">Integrity / 完整性</span><br><span class="value">5/5</span></div>
+                            </div>
+                            
+                        <div style="margin-top: 8px;">
+                            <div style="color: #aaa; font-size: 12px;">Call Path / 调用路径:</div>
+                            <div style="font-size: 12px; padding: 2px 0;">[11] Line 35: def search_users():</div><div style="font-size: 12px; padding: 2px 0;">[12] Line 37: keyword = request.args.get(&quot;q&quot;, &quot;&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[13] Line 38: conn = sqlite3.connect(&quot;users.db&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[14] Line 39: cursor = conn.cursor()</div><div style="font-size: 12px; padding: 2px 0;">[15] Line 41: cursor.execute(f&quot;SELECT * FROM users WHERE name LIKE &#x27;%{keyword}%&#x27;&quot;)  # SQL 注入!</div>
+                            <div style="font-size: 12px; margin-top: 4px;">Source / 输入源: <span style="color: #e0e0e0;">Flask 请求</span></div>
+                            <div style="font-size: 12px;">Sink / 危险函数: <span style="color: #e0e0e0;">SQL注入</span></div>
+                        </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #28a745;"><strong>Fix / 修复:</strong> 使用参数化查询（prepared statement）代替字符串拼接。例如：cursor.execute(&quot;SELECT * FROM users WHERE name LIKE ?&quot;, (&#x27;%&#x27; + keyword + &#x27;%&#x27;,))</div>
+                        </div>
+                    </details>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #fd7e14; font-size: 13px; font-weight: 600;">PoC Exploit Code / 利用代码</summary>
+                        <div class="code-block"><pre>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: SQL Injection
+Target: tests\vulnerable_app.py:41
+CWE: CWE-89
+&quot;&quot;&quot;
+
+import requests
+
+def test_sql_injection(target_url, param=&quot;id&quot;):
+    &quot;&quot;&quot;检测 SQL 注入漏洞&quot;&quot;&quot;
+    payloads = [
+        &quot;&#x27; OR &#x27;1&#x27;=&#x27;1&quot;,
+        &quot;&#x27; UNION SELECT NULL--&quot;,
+        &quot;&#x27; AND 1=1--&quot;,
+        &quot;&#x27; AND 1=2--&quot;,
+        &quot;&#x27;; DROP TABLE users--&quot;,
+        &quot;&#x27; OR &#x27;1&#x27;=&#x27;1&#x27; --&quot;,
+    ]
+
+    print(f&quot;[*] 测试目标: {target</pre></div>
+                    </details>
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">硬编码密钥/凭证</div>
+                            <div class="finding-file">tests\vulnerable_app.py:84</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-798</span>
+                        <span class="tag scope">pattern_match+llm_api</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">硬编码的密钥和凭证可能被攻击者获取，导致云资源被盗用或系统被入侵</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>ACCESS_KEY = &quot;AKIAIOSFODNN7EXAMPLE&quot;</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     82</span> </div><div><span class="line-num">     83</span> # 直接硬编码的 AWS 密钥</div><div><span class="line-num"> &gt;&gt;&gt; 84</span> AWS_ACCESS_KEY = &quot;AKIAIOSFODNN7EXAMPLE&quot;</div><div><span class="line-num">     85</span> AWS_SECRET_KEY = &quot;wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY&quot;</div><div><span class="line-num">     86</span> </div>
+                    </div>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #00d4ff; font-size: 13px; font-weight: 600;">Evidence Chain / 证据链</summary>
+                        <div class="evidence">
+                            <div class="evidence-grid">
+                                <div class="evidence-item"><span class="label">File / 文件</span><br><span class="value">tests\vulnerable_app.py</span></div>
+                                <div class="evidence-item"><span class="label">Line / 行号</span><br><span class="value">84</span></div>
+                                <div class="evidence-item"><span class="label">Verified / 验证</span><br><span class="value">Confirmed</span></div>
+                                <div class="evidence-item"><span class="label">Integrity / 完整性</span><br><span class="value">5/5</span></div>
+                            </div>
+                            
+                        <div style="margin-top: 8px;">
+                            <div style="color: #aaa; font-size: 12px;">Call Path / 调用路径:</div>
+                            <div style="font-size: 12px; padding: 2px 0;">[8] Line 72: filename = request.args.get(&quot;file&quot;, &quot;README.md&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[9] Line 74: filepath = os.path.join(&quot;data&quot;, filename)</div><div style="font-size: 12px; padding: 2px 0;">[10] Line 75: with open(filepath, &quot;r&quot;) as f:  # 路径遍历!</div><div style="font-size: 12px; padding: 2px 0;">[11] Line 76: return f.read()</div><div style="font-size: 12px; padding: 2px 0;">[12] Line 84: AWS_ACCESS_KEY = &quot;AKIAIOSFODNN7EXAMPLE&quot;</div>
+                            <div style="font-size: 12px; margin-top: 4px;">Source / 输入源: <span style="color: #e0e0e0;">Flask 请求</span></div>
+                            <div style="font-size: 12px;">Sink / 危险函数: <span style="color: #e0e0e0;">硬编码密钥/凭证</span></div>
+                        </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #28a745;"><strong>Fix / 修复:</strong> 使用环境变量或安全的密钥管理服务（如AWS Secrets Manager、HashiCorp Vault）来存储和管理敏感凭证。</div>
+                        </div>
+                    </details>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #fd7e14; font-size: 13px; font-weight: 600;">PoC Exploit Code / 利用代码</summary>
+                        <div class="code-block"><pre>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: Hardcoded Secret Leakage
+Target: tests\vulnerable_app.py:84
+CWE: CWE-798
+&quot;&quot;&quot;
+
+import re
+
+def analyze_secret_leak(file_path):
+    &quot;&quot;&quot;分析泄露的密钥类型和风险&quot;&quot;&quot;
+    with open(file_path, &#x27;r&#x27;) as f:
+        content = f.read()
+
+    # 检测各类密钥
+    patterns = {
+        &quot;AWS Key&quot;: r&quot;AKIA[0-9A-Z]{16}&quot;,
+        &quot;OpenAI Key&quot;: r&quot;sk-[A-Za-z0-9]{32,}&quot;,
+        &quot;Private Key&quot;: r&quot;-----BEGIN (RSA |EC )?PRIVATE KEY-----&quot;,
+        &quot;Generic Secret&quot;: r&quot;(</pre></div>
+                    </details>
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">硬编码密钥/凭证</div>
+                            <div class="finding-file">tests\vulnerable_app.py:88</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-798</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">硬编码的密钥和凭证可能被攻击者获取，导致云资源被盗用或系统被入侵</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>SECRET = &quot;sk-abcdefghijklmnopqrstuvwxyz1234567890abcd&quot;</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     86</span> </div><div><span class="line-num">     87</span> # 硬编码的 API 密钥</div><div><span class="line-num"> &gt;&gt;&gt; 88</span> API_SECRET = &quot;sk-abcdefghijklmnopqrstuvwxyz1234567890abcd&quot;</div><div><span class="line-num">     89</span> DB_PASSWORD = &quot;SuperSecretPassword123!@#&quot;</div><div><span class="line-num">     90</span> JWT_SECRET = &quot;my-secret-key-change-in-production-12345&quot;</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">硬编码密钥/凭证</div>
+                            <div class="finding-file">tests\vulnerable_app.py:90</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-798</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">硬编码的密钥和凭证可能被攻击者获取，导致云资源被盗用或系统被入侵</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>SECRET = &quot;my-secret-key-change-in-production-12345&quot;</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     88</span> API_SECRET = &quot;sk-abcdefghijklmnopqrstuvwxyz1234567890abcd&quot;</div><div><span class="line-num">     89</span> DB_PASSWORD = &quot;SuperSecretPassword123!@#&quot;</div><div><span class="line-num"> &gt;&gt;&gt; 90</span> JWT_SECRET = &quot;my-secret-key-change-in-production-12345&quot;</div><div><span class="line-num">     91</span> </div><div><span class="line-num">     92</span> # ============================================================</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">不安全反序列化</div>
+                            <div class="finding-file">tests\vulnerable_app.py:101</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-502</span>
+                        <span class="tag scope">pattern_match+llm_api</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可利用不安全反序列化漏洞执行远程代码</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>pickle.loads(</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     99</span>     if data:</div><div><span class="line-num">     100</span>         # 漏洞: 对不可信数据进行 pickle 反序列化</div><div><span class="line-num"> &gt;&gt;&gt; 101</span>         obj = pickle.loads(bytes.fromhex(data))  # 不安全反序列化!</div><div><span class="line-num">     102</span>         return str(obj)</div><div><span class="line-num">     103</span>     return &quot;No data&quot;</div>
+                    </div>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #00d4ff; font-size: 13px; font-weight: 600;">Evidence Chain / 证据链</summary>
+                        <div class="evidence">
+                            <div class="evidence-grid">
+                                <div class="evidence-item"><span class="label">File / 文件</span><br><span class="value">tests\vulnerable_app.py</span></div>
+                                <div class="evidence-item"><span class="label">Line / 行号</span><br><span class="value">101</span></div>
+                                <div class="evidence-item"><span class="label">Verified / 验证</span><br><span class="value">Confirmed</span></div>
+                                <div class="evidence-item"><span class="label">Integrity / 完整性</span><br><span class="value">5/5</span></div>
+                            </div>
+                            
+                        <div style="margin-top: 8px;">
+                            <div style="color: #aaa; font-size: 12px;">Call Path / 调用路径:</div>
+                            <div style="font-size: 12px; padding: 2px 0;">[9] Line 90: JWT_SECRET = &quot;my-secret-key-change-in-production-12345&quot;</div><div style="font-size: 12px; padding: 2px 0;">[10] Line 95: @app.route(&quot;/deserialize&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[11] Line 96: def unsafe_deserialize():</div><div style="font-size: 12px; padding: 2px 0;">[12] Line 98: data = request.args.get(&quot;data&quot;, &quot;&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[13] Line 101: obj = pickle.loads(bytes.fromhex(data))  # 不安全反序列化!</div>
+                            <div style="font-size: 12px; margin-top: 4px;">Source / 输入源: <span style="color: #e0e0e0;">Flask 请求</span></div>
+                            <div style="font-size: 12px;">Sink / 危险函数: <span style="color: #e0e0e0;">不安全反序列化</span></div>
+                        </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #28a745;"><strong>Fix / 修复:</strong> 避免对不可信数据进行pickle反序列化。如果必须反序列化，使用更安全的序列化格式（如JSON），并对数据进行严格的校验。</div>
+                        </div>
+                    </details>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #fd7e14; font-size: 13px; font-weight: 600;">PoC Exploit Code / 利用代码</summary>
+                        <div class="code-block"><pre>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全反序列化
+Target: tests\vulnerable_app.py:101
+CWE: CWE-502
+Risk: 高危
+
+Description:
+攻击者可利用不安全反序列化漏洞执行远程代码
+&quot;&quot;&quot;
+
+def verify_vulnerability():
+    &quot;&quot;&quot;验证此漏洞的通用步骤&quot;&quot;&quot;
+    print(&quot;[*] 建议手工验证步骤:&quot;)
+    print(f&quot;  1. 查看文件: tests\vulnerable_app.py&quot;)
+    print(f&quot;  2. 定位到行: 101&quot;)
+    print(f&quot;  3. 分析输入是否可控&quot;)
+    print(f&quot;  4. 跟踪数据流向&quot;)
+    print(f&quot;  5. 构造利用请求&quot;)
+
+if __name__ == &quot;__main__&quot;:
+    verify_vulnerability()
+</pre></div>
+                    </details>
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">服务端模板注入 (SSTI)</div>
+                            <div class="finding-file">tests\vulnerable_app.py:115</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-1336</span>
+                        <span class="tag scope">pattern_match+llm_api</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可通过注入模板表达式执行任意代码或读取敏感数据</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>render_template_string(</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     113</span>     # 漏洞: 未转义直接渲染用户输入</div><div><span class="line-num">     114</span>     html = f&quot;&lt;h1&gt;Hello, {name}!&lt;/h1&gt;&quot;  # XSS!</div><div><span class="line-num"> &gt;&gt;&gt; 115</span>     return render_template_string(html)</div><div><span class="line-num">     116</span> </div><div><span class="line-num">     117</span> </div>
+                    </div>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #00d4ff; font-size: 13px; font-weight: 600;">Evidence Chain / 证据链</summary>
+                        <div class="evidence">
+                            <div class="evidence-grid">
+                                <div class="evidence-item"><span class="label">File / 文件</span><br><span class="value">tests\vulnerable_app.py</span></div>
+                                <div class="evidence-item"><span class="label">Line / 行号</span><br><span class="value">115</span></div>
+                                <div class="evidence-item"><span class="label">Verified / 验证</span><br><span class="value">Confirmed</span></div>
+                                <div class="evidence-item"><span class="label">Integrity / 完整性</span><br><span class="value">5/5</span></div>
+                            </div>
+                            
+                        <div style="margin-top: 8px;">
+                            <div style="color: #aaa; font-size: 12px;">Call Path / 调用路径:</div>
+                            <div style="font-size: 12px; padding: 2px 0;">[10] Line 109: @app.route(&quot;/hello&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[11] Line 110: def hello():</div><div style="font-size: 12px; padding: 2px 0;">[12] Line 112: name = request.args.get(&quot;name&quot;, &quot;World&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[13] Line 114: html = f&quot;&lt;h1&gt;Hello, {name}!&lt;/h1&gt;&quot;  # XSS!</div><div style="font-size: 12px; padding: 2px 0;">[14] Line 115: return render_template_string(html)</div>
+                            <div style="font-size: 12px; margin-top: 4px;">Source / 输入源: <span style="color: #e0e0e0;">Flask 请求</span></div>
+                            <div style="font-size: 12px;">Sink / 危险函数: <span style="color: #e0e0e0;">服务端模板注入 (SSTI)</span></div>
+                        </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #28a745;"><strong>Fix / 修复:</strong> 使用Flask的模板引擎自动转义功能，或手动对用户输入进行HTML转义。避免直接拼接用户输入到模板字符串中。</div>
+                        </div>
+                    </details>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #fd7e14; font-size: 13px; font-weight: 600;">PoC Exploit Code / 利用代码</summary>
+                        <div class="code-block"><pre>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 服务端模板注入 (SSTI)
+Target: tests\vulnerable_app.py:115
+CWE: CWE-1336
+Risk: 高危
+
+Description:
+攻击者可通过注入模板表达式执行任意代码或读取敏感数据
+&quot;&quot;&quot;
+
+def verify_vulnerability():
+    &quot;&quot;&quot;验证此漏洞的通用步骤&quot;&quot;&quot;
+    print(&quot;[*] 建议手工验证步骤:&quot;)
+    print(f&quot;  1. 查看文件: tests\vulnerable_app.py&quot;)
+    print(f&quot;  2. 定位到行: 115&quot;)
+    print(f&quot;  3. 分析输入是否可控&quot;)
+    print(f&quot;  4. 跟踪数据流向&quot;)
+    print(f&quot;  5. 构造利用请求&quot;)
+
+if __name__ == &quot;__main__&quot;:
+    verify_vulnerability()
+</pre></div>
+                    </details>
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">二阶SQL注入</div>
+                            <div class="finding-file">tests\vulnerable_app.py:41</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-89</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可在首次请求中注入恶意数据，存储后触发二次查询时被利用</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>SELECT * FROM users WHERE name LIKE &#x27;%{keyword}%</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     39</span>     cursor = conn.cursor()</div><div><span class="line-num">     40</span>     # 漏洞: 拼接用户输入</div><div><span class="line-num"> &gt;&gt;&gt; 41</span>     cursor.execute(f&quot;SELECT * FROM users WHERE name LIKE &#x27;%{keyword}%&#x27;&quot;)  # SQL 注入!</div><div><span class="line-num">     42</span>     return str(cursor.fetchall())</div><div><span class="line-num">     43</span> </div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">SQL注入</div>
+                            <div class="finding-file">src\analyzers\ast_analyzer.py:143</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-89</span>
+                        <span class="tag scope">pattern_match+llm_api</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可通过构造恶意SQL语句操纵数据库，导致数据泄露、篡改或删除</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>cursor.execute(f&quot;</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     141</span>             node_text = content[node.start_byte:node.end_byte]</div><div><span class="line-num">     142</span> </div><div><span class="line-num"> &gt;&gt;&gt; 143</span>             # Python: cursor.execute(f&quot;...&quot;) 或 execute(&quot;...&quot; % var)</div><div><span class="line-num">     144</span>             sql_patterns = [</div><div><span class="line-num">     145</span>                 r&#x27;cursor\.execute\s*\(&#x27;,</div>
+                    </div>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #00d4ff; font-size: 13px; font-weight: 600;">Evidence Chain / 证据链</summary>
+                        <div class="evidence">
+                            <div class="evidence-grid">
+                                <div class="evidence-item"><span class="label">File / 文件</span><br><span class="value">src\analyzers\ast_analyzer.py</span></div>
+                                <div class="evidence-item"><span class="label">Line / 行号</span><br><span class="value">143</span></div>
+                                <div class="evidence-item"><span class="label">Verified / 验证</span><br><span class="value">Confirmed</span></div>
+                                <div class="evidence-item"><span class="label">Integrity / 完整性</span><br><span class="value">5/5</span></div>
+                            </div>
+                            
+                        <div style="margin-top: 8px;">
+                            <div style="color: #aaa; font-size: 12px;">Call Path / 调用路径:</div>
+                            <div style="font-size: 12px; padding: 2px 0;">[8] Line 133: root = tree.root_node</div><div style="font-size: 12px; padding: 2px 0;">[9] Line 135: self._walk_and_find_xss(root, content, lines, findings)</div><div style="font-size: 12px; padding: 2px 0;">[10] Line 138: def _walk_and_find_sql_injection(self, node, content: str, lines: list, findings: list):</div><div style="font-size: 12px; padding: 2px 0;">[11] Line 140: if node.type in (&quot;call&quot;, &quot;call_expression&quot;, &quot;method_invocation&quot;):</div><div style="font-size: 12px; padding: 2px 0;">[12] Line 141: node_text = content[node.start_byte:node.end_byte]</div>
+                            <div style="font-size: 12px; margin-top: 4px;">Source / 输入源: <span style="color: #e0e0e0;">未识别到明确输入源</span></div>
+                            <div style="font-size: 12px;">Sink / 危险函数: <span style="color: #e0e0e0;">SQL注入</span></div>
+                        </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #28a745;"><strong>Fix / 修复:</strong> 1. 增强AST分析逻辑，追踪变量来源，识别用户可控输入。2. 结合数据流分析，标记从用户输入到SQL执行函数的路径。3. 推荐使用参数化查询或ORM框架，从根本上防止SQL注入。</div>
+                        </div>
+                    </details>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #fd7e14; font-size: 13px; font-weight: 600;">PoC Exploit Code / 利用代码</summary>
+                        <div class="code-block"><pre>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: SQL Injection
+Target: src\analyzers\ast_analyzer.py:143
+CWE: CWE-89
+&quot;&quot;&quot;
+
+import requests
+
+def test_sql_injection(target_url, param=&quot;id&quot;):
+    &quot;&quot;&quot;检测 SQL 注入漏洞&quot;&quot;&quot;
+    payloads = [
+        &quot;&#x27; OR &#x27;1&#x27;=&#x27;1&quot;,
+        &quot;&#x27; UNION SELECT NULL--&quot;,
+        &quot;&#x27; AND 1=1--&quot;,
+        &quot;&#x27; AND 1=2--&quot;,
+        &quot;&#x27;; DROP TABLE users--&quot;,
+        &quot;&#x27; OR &#x27;1&#x27;=&#x27;1&#x27; --&quot;,
+    ]
+
+    print(f&quot;[*] 测试目标: </pre></div>
+                    </details>
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">XML外部实体注入 (XXE)</div>
+                            <div class="finding-file">config\settings.py:170</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-611</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可通过恶意XML实体引用读取服务器文件、执行SSRF攻击或导致拒绝服务</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>DocumentBuilderFactory</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     168</span>         &quot;patterns&quot;: [</div><div><span class="line-num">     169</span>             r&quot;&quot;&quot;SAXParser\.parse\s*\(&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 170</span>             r&quot;&quot;&quot;DocumentBuilderFactory&quot;&quot;&quot;,</div><div><span class="line-num">     171</span>             r&quot;&quot;&quot;SimpleXML\s*\(\s*file_get_contents&quot;&quot;&quot;,</div><div><span class="line-num">     172</span>             r&quot;&quot;&quot;loadXML\s*\(&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">XML外部实体注入 (XXE)</div>
+                            <div class="finding-file">config\settings.py:173</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-611</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可通过恶意XML实体引用读取服务器文件、执行SSRF攻击或导致拒绝服务</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>XMLReader</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     171</span>             r&quot;&quot;&quot;SimpleXML\s*\(\s*file_get_contents&quot;&quot;&quot;,</div><div><span class="line-num">     172</span>             r&quot;&quot;&quot;loadXML\s*\(&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 173</span>             r&quot;&quot;&quot;XMLReader&quot;&quot;&quot;,</div><div><span class="line-num">     174</span>             r&quot;&quot;&quot;libxml_disable_entity_loader\s*\(\s*false&quot;&quot;&quot;,</div><div><span class="line-num">     175</span>             r&quot;&quot;&quot;DOMDocument::load&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">XML外部实体注入 (XXE)</div>
+                            <div class="finding-file">config\settings.py:175</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-611</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可通过恶意XML实体引用读取服务器文件、执行SSRF攻击或导致拒绝服务</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>DOMDocument::load</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     173</span>             r&quot;&quot;&quot;XMLReader&quot;&quot;&quot;,</div><div><span class="line-num">     174</span>             r&quot;&quot;&quot;libxml_disable_entity_loader\s*\(\s*false&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 175</span>             r&quot;&quot;&quot;DOMDocument::load&quot;&quot;&quot;,</div><div><span class="line-num">     176</span>         ],</div><div><span class="line-num">     177</span>         &quot;risk_description&quot;: &quot;攻击者可通过恶意XML实体引用读取服务器文件、执行SSRF攻击或导致拒绝服务&quot;</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">LDAP注入</div>
+                            <div class="finding-file">config\settings.py:216</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-90</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可篡改LDAP查询语句，绕过认证或获取未授权数据</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>LdapTemplate</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     214</span>             r&quot;&quot;&quot;ldap_read\s*\(&quot;&quot;&quot;,</div><div><span class="line-num">     215</span>             r&quot;&quot;&quot;DirContext\.search&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 216</span>             r&quot;&quot;&quot;LdapTemplate&quot;&quot;&quot;,</div><div><span class="line-num">     217</span>             r&quot;&quot;&quot;initialLdapContext&quot;&quot;&quot;,</div><div><span class="line-num">     218</span>         ],</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">LDAP注入</div>
+                            <div class="finding-file">config\settings.py:217</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-90</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可篡改LDAP查询语句，绕过认证或获取未授权数据</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>initialLdapContext</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     215</span>             r&quot;&quot;&quot;DirContext\.search&quot;&quot;&quot;,</div><div><span class="line-num">     216</span>             r&quot;&quot;&quot;LdapTemplate&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 217</span>             r&quot;&quot;&quot;initialLdapContext&quot;&quot;&quot;,</div><div><span class="line-num">     218</span>         ],</div><div><span class="line-num">     219</span>         &quot;risk_description&quot;: &quot;攻击者可篡改LDAP查询语句，绕过认证或获取未授权数据&quot;</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">服务端模板注入 (SSTI)</div>
+                            <div class="finding-file">config\settings.py:240</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-1336</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可通过注入模板表达式执行任意代码或读取敏感数据</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>render_to_string</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     238</span>         &quot;patterns&quot;: [</div><div><span class="line-num">     239</span>             r&quot;&quot;&quot;render_template_string\s*\(&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 240</span>             r&quot;&quot;&quot;render_to_string&quot;&quot;&quot;,</div><div><span class="line-num">     241</span>             r&quot;&quot;&quot;\.render\s*\(\s*request\.args&quot;&quot;&quot;,</div><div><span class="line-num">     242</span>             r&quot;&quot;&quot;Template\s*\(\s*[&quot;&#x27;][^&quot;&#x27;]*\${&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">不安全文件上传</div>
+                            <div class="finding-file">config\settings.py:258</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-434</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可上传恶意文件（WebShell、恶意脚本）导致服务器被控制</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>move_uploaded_file</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     256</span>             r&quot;&quot;&quot;upload\(&quot;&quot;&quot;,</div><div><span class="line-num">     257</span>             r&quot;&quot;&quot;\.save\s*\(\s*[&quot;&#x27;][^&quot;&#x27;]*\.[^&quot;&#x27;]*[&quot;&#x27;]\s*\)&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 258</span>             r&quot;&quot;&quot;move_uploaded_file&quot;&quot;&quot;,</div><div><span class="line-num">     259</span>             r&quot;&quot;&quot;file_put_contents.*$_FILES&quot;&quot;&quot;,</div><div><span class="line-num">     260</span>             r&quot;&quot;&quot;open\(.*filename.*[&#x27;&quot;&quot;][^&#x27;&quot;&quot;]*\.\w+[&#x27;&quot;&quot;]&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">JWT安全漏洞</div>
+                            <div class="finding-file">config\settings.py:272</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-347</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可利用JWT算法混淆、空签名或密钥泄露伪造身份令牌</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>algorithms.*None</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     270</span>             r&quot;&quot;&quot;jwt\.decode.*None&quot;&quot;&quot;,</div><div><span class="line-num">     271</span>             r&quot;&quot;&quot;algorithm=[&#x27;&quot;&quot;]none[&#x27;&quot;&quot;]&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 272</span>             r&quot;&quot;&quot;algorithms.*None&quot;&quot;&quot;,</div><div><span class="line-num">     273</span>             r&quot;&quot;&quot;JWT_ALGORITHM.*[&#x27;&quot;&quot;]none[&#x27;&quot;&quot;]&quot;&quot;&quot;,</div><div><span class="line-num">     274</span>             r&quot;&quot;&quot;jwt\.encode.*secret.*None&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">CRLF注入/HTTP响应拆分</div>
+                            <div class="finding-file">config\settings.py:300</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-93</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可通过注入CRLF序列实现HTTP响应拆分、缓存投毒或XSS攻击</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>add_header.*%0</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     298</span>             r&quot;&quot;&quot;%0[dDaA].*%0[aA]&quot;&quot;&quot;,</div><div><span class="line-num">     299</span>             r&quot;&quot;&quot;\\\\r\\\\n.*header&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 300</span>             r&quot;&quot;&quot;add_header.*%0&quot;&quot;&quot;,</div><div><span class="line-num">     301</span>         ],</div><div><span class="line-num">     302</span>         &quot;risk_description&quot;: &quot;攻击者可通过注入CRLF序列实现HTTP响应拆分、缓存投毒或XSS攻击&quot;</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">原型链污染 (Prototype Pollution)</div>
+                            <div class="finding-file">config\settings.py:329</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-1321</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可通过原型链污染实现属性注入，导致拒绝服务或远程代码执行</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>deepMerge.*__proto__</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     327</span>             r&quot;&quot;&quot;\[\s*[&#x27;&quot;&quot;]__proto__[&#x27;&quot;&quot;]\s*\]&quot;&quot;&quot;,</div><div><span class="line-num">     328</span>             r&quot;&quot;&quot;\.clone\s*\(\s*.*__proto__&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 329</span>             r&quot;&quot;&quot;deepMerge.*__proto__&quot;&quot;&quot;,</div><div><span class="line-num">     330</span>             r&quot;&quot;&quot;extend\(true.*__proto__&quot;&quot;&quot;,</div><div><span class="line-num">     331</span>         ],</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">弱加密算法</div>
+                            <div class="finding-file">config\settings.py:357</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-327</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">使用已被破解的加密算法（MD5、DES、RC4、SHA-1），可被攻击者逆向破解</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>Crypt::DES</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     355</span>             r&quot;&quot;&quot;Cipher\.getInstance\([&#x27;&quot;&quot;]RC4[&#x27;&quot;&quot;]&quot;&quot;&quot;,</div><div><span class="line-num">     356</span>             r&quot;&quot;&quot;sha1\s*\(&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 357</span>             r&quot;&quot;&quot;Crypt::DES&quot;&quot;&quot;,</div><div><span class="line-num">     358</span>             r&quot;&quot;&quot;des\s*-\s*cbc&quot;&quot;&quot;,</div><div><span class="line-num">     359</span>             r&quot;&quot;&quot;md5\(.*password&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">弱加密算法</div>
+                            <div class="finding-file">config\settings.py:360</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-327</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">使用已被破解的加密算法（MD5、DES、RC4、SHA-1），可被攻击者逆向破解</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>mysql_native_password</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     358</span>             r&quot;&quot;&quot;des\s*-\s*cbc&quot;&quot;&quot;,</div><div><span class="line-num">     359</span>             r&quot;&quot;&quot;md5\(.*password&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 360</span>             r&quot;&quot;&quot;mysql_native_password&quot;&quot;&quot;,</div><div><span class="line-num">     361</span>         ],</div><div><span class="line-num">     362</span>         &quot;risk_description&quot;: &quot;使用已被破解的加密算法（MD5、DES、RC4、SHA-1），可被攻击者逆向破解&quot;</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">不安全的证书验证</div>
+                            <div class="finding-file">config\settings.py:269</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-295</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">禁用证书验证可能导致中间人攻击，通信数据被窃听或篡改</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>verify=False</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     267</span>         &quot;cwe&quot;: &quot;CWE-347&quot;,</div><div><span class="line-num">     268</span>         &quot;patterns&quot;: [</div><div><span class="line-num"> &gt;&gt;&gt; 269</span>             r&quot;&quot;&quot;jwt\.decode.*verify=False&quot;&quot;&quot;,</div><div><span class="line-num">     270</span>             r&quot;&quot;&quot;jwt\.decode.*None&quot;&quot;&quot;,</div><div><span class="line-num">     271</span>             r&quot;&quot;&quot;algorithm=[&#x27;&quot;&quot;]none[&#x27;&quot;&quot;]&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">不安全的证书验证</div>
+                            <div class="finding-file">config\settings.py:369</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-295</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">禁用证书验证可能导致中间人攻击，通信数据被窃听或篡改</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>verify=False</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     367</span>         &quot;cwe&quot;: &quot;CWE-295&quot;,</div><div><span class="line-num">     368</span>         &quot;patterns&quot;: [</div><div><span class="line-num"> &gt;&gt;&gt; 369</span>             r&quot;&quot;&quot;verify=False&quot;&quot;&quot;,</div><div><span class="line-num">     370</span>             r&quot;&quot;&quot;ssl\._create_default_https_context&quot;&quot;&quot;,</div><div><span class="line-num">     371</span>             r&quot;&quot;&quot;check_hostname\s*=\s*False&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">不安全的证书验证</div>
+                            <div class="finding-file">config\settings.py:372</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-295</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">禁用证书验证可能导致中间人攻击，通信数据被窃听或篡改</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>CERT_NONE</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     370</span>             r&quot;&quot;&quot;ssl\._create_default_https_context&quot;&quot;&quot;,</div><div><span class="line-num">     371</span>             r&quot;&quot;&quot;check_hostname\s*=\s*False&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 372</span>             r&quot;&quot;&quot;CERT_NONE&quot;&quot;&quot;,</div><div><span class="line-num">     373</span>             r&quot;&quot;&quot;\.context\.check_hostname\s*=\s*False&quot;&quot;&quot;,</div><div><span class="line-num">     374</span>             r&quot;&quot;&quot;REQUIRED&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">不安全的证书验证</div>
+                            <div class="finding-file">config\settings.py:374</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-295</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">禁用证书验证可能导致中间人攻击，通信数据被窃听或篡改</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>REQUIRED</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     372</span>             r&quot;&quot;&quot;CERT_NONE&quot;&quot;&quot;,</div><div><span class="line-num">     373</span>             r&quot;&quot;&quot;\.context\.check_hostname\s*=\s*False&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 374</span>             r&quot;&quot;&quot;REQUIRED&quot;&quot;&quot;,</div><div><span class="line-num">     375</span>             r&quot;&quot;&quot;ssl._create_unverified_context&quot;&quot;&quot;,</div><div><span class="line-num">     376</span>         ],</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">不安全的证书验证</div>
+                            <div class="finding-file">config\settings.py:375</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-295</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">禁用证书验证可能导致中间人攻击，通信数据被窃听或篡改</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>ssl._create_unverified_context</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     373</span>             r&quot;&quot;&quot;\.context\.check_hostname\s*=\s*False&quot;&quot;&quot;,</div><div><span class="line-num">     374</span>             r&quot;&quot;&quot;REQUIRED&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 375</span>             r&quot;&quot;&quot;ssl._create_unverified_context&quot;&quot;&quot;,</div><div><span class="line-num">     376</span>         ],</div><div><span class="line-num">     377</span>         &quot;risk_description&quot;: &quot;禁用证书验证可能导致中间人攻击，通信数据被窃听或篡改&quot;</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">条件竞争/TOCTOU</div>
+                            <div class="finding-file">config\settings.py:413</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-367</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">检查时间和使用时间之间存在窗口期，攻击者可利用竞争条件绕过安全检查</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>if.*exists.*open</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     411</span>         &quot;patterns&quot;: [</div><div><span class="line-num">     412</span>             r&quot;&quot;&quot;os\.path\.exists.*os\.(remove|unlink)&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 413</span>             r&quot;&quot;&quot;if.*exists.*open&quot;&quot;&quot;,</div><div><span class="line-num">     414</span>             r&quot;&quot;&quot;if.*exists.*delete&quot;&quot;&quot;,</div><div><span class="line-num">     415</span>             r&quot;&quot;&quot;check.*write&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">条件竞争/TOCTOU</div>
+                            <div class="finding-file">config\settings.py:414</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-367</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">检查时间和使用时间之间存在窗口期，攻击者可利用竞争条件绕过安全检查</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>if.*exists.*delete</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     412</span>             r&quot;&quot;&quot;os\.path\.exists.*os\.(remove|unlink)&quot;&quot;&quot;,</div><div><span class="line-num">     413</span>             r&quot;&quot;&quot;if.*exists.*open&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 414</span>             r&quot;&quot;&quot;if.*exists.*delete&quot;&quot;&quot;,</div><div><span class="line-num">     415</span>             r&quot;&quot;&quot;check.*write&quot;&quot;&quot;,</div><div><span class="line-num">     416</span>             r&quot;&quot;&quot;with\s+open\(\).*while&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">条件竞争/TOCTOU</div>
+                            <div class="finding-file">config\settings.py:415</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-367</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">检查时间和使用时间之间存在窗口期，攻击者可利用竞争条件绕过安全检查</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>check.*write</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     413</span>             r&quot;&quot;&quot;if.*exists.*open&quot;&quot;&quot;,</div><div><span class="line-num">     414</span>             r&quot;&quot;&quot;if.*exists.*delete&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 415</span>             r&quot;&quot;&quot;check.*write&quot;&quot;&quot;,</div><div><span class="line-num">     416</span>             r&quot;&quot;&quot;with\s+open\(\).*while&quot;&quot;&quot;,</div><div><span class="line-num">     417</span>         ],</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">明文存储敏感信息</div>
+                            <div class="finding-file">config\settings.py:426</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-312</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">敏感信息（密码、身份证、银行卡号等）以明文存储，泄露后可造成严重损失</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>credit_card</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     424</span>         &quot;patterns&quot;: [</div><div><span class="line-num">     425</span>             r&#x27;password\s*=\s*[&quot;\&#x27;][A-Za-z0-9!@#$%^&amp;*()_+\-=\[\]{}|;:,.&lt;&gt;?]+[&quot;\&#x27;]&#x27;,</div><div><span class="line-num"> &gt;&gt;&gt; 426</span>             r&#x27;credit_card&#x27;,</div><div><span class="line-num">     427</span>             r&#x27;ssn\s*=&#x27;,</div><div><span class="line-num">     428</span>             r&#x27;phone\s*=\s*[&quot;\&#x27;]\d{11}[&quot;\&#x27;]&#x27;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">明文存储敏感信息</div>
+                            <div class="finding-file">config\settings.py:429</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-312</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">敏感信息（密码、身份证、银行卡号等）以明文存储，泄露后可造成严重损失</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>id_card</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     427</span>             r&#x27;ssn\s*=&#x27;,</div><div><span class="line-num">     428</span>             r&#x27;phone\s*=\s*[&quot;\&#x27;]\d{11}[&quot;\&#x27;]&#x27;,</div><div><span class="line-num"> &gt;&gt;&gt; 429</span>             r&#x27;id_card&#x27;,</div><div><span class="line-num">     430</span>             r&#x27;bank_account&#x27;,</div><div><span class="line-num">     431</span>             r&#x27;passport_number&#x27;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">明文存储敏感信息</div>
+                            <div class="finding-file">config\settings.py:430</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-312</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">敏感信息（密码、身份证、银行卡号等）以明文存储，泄露后可造成严重损失</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>bank_account</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     428</span>             r&#x27;phone\s*=\s*[&quot;\&#x27;]\d{11}[&quot;\&#x27;]&#x27;,</div><div><span class="line-num">     429</span>             r&#x27;id_card&#x27;,</div><div><span class="line-num"> &gt;&gt;&gt; 430</span>             r&#x27;bank_account&#x27;,</div><div><span class="line-num">     431</span>             r&#x27;passport_number&#x27;,</div><div><span class="line-num">     432</span>         ],</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">明文存储敏感信息</div>
+                            <div class="finding-file">config\settings.py:431</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-312</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">敏感信息（密码、身份证、银行卡号等）以明文存储，泄露后可造成严重损失</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>passport_number</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     429</span>             r&#x27;id_card&#x27;,</div><div><span class="line-num">     430</span>             r&#x27;bank_account&#x27;,</div><div><span class="line-num"> &gt;&gt;&gt; 431</span>             r&#x27;passport_number&#x27;,</div><div><span class="line-num">     432</span>         ],</div><div><span class="line-num">     433</span>         &quot;risk_description&quot;: &quot;敏感信息（密码、身份证、银行卡号等）以明文存储，泄露后可造成严重损失&quot;</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">二阶SQL注入</div>
+                            <div class="finding-file">config\settings.py:440</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-89</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可在首次请求中注入恶意数据，存储后触发二次查询时被利用</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>SELECT.*FROM.*WHERE.*\|</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     438</span>         &quot;cwe&quot;: &quot;CWE-89&quot;,</div><div><span class="line-num">     439</span>         &quot;patterns&quot;: [</div><div><span class="line-num"> &gt;&gt;&gt; 440</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*\|&quot;&quot;&quot;,</div><div><span class="line-num">     441</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*\+&quot;&quot;&quot;,</div><div><span class="line-num">     442</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*%&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">二阶SQL注入</div>
+                            <div class="finding-file">config\settings.py:441</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-89</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可在首次请求中注入恶意数据，存储后触发二次查询时被利用</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>SELECT.*FROM.*WHERE.*\+</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     439</span>         &quot;patterns&quot;: [</div><div><span class="line-num">     440</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*\|&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 441</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*\+&quot;&quot;&quot;,</div><div><span class="line-num">     442</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*%&quot;&quot;&quot;,</div><div><span class="line-num">     443</span>             r&quot;&quot;&quot;insert.*into.*values.*SELECT&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">二阶SQL注入</div>
+                            <div class="finding-file">config\settings.py:442</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-89</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可在首次请求中注入恶意数据，存储后触发二次查询时被利用</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>SELECT.*FROM.*WHERE.*%</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     440</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*\|&quot;&quot;&quot;,</div><div><span class="line-num">     441</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*\+&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 442</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*%&quot;&quot;&quot;,</div><div><span class="line-num">     443</span>             r&quot;&quot;&quot;insert.*into.*values.*SELECT&quot;&quot;&quot;,</div><div><span class="line-num">     444</span>             r&quot;&quot;&quot;INSERT.*SELECT&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">二阶SQL注入</div>
+                            <div class="finding-file">config\settings.py:443</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-89</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可在首次请求中注入恶意数据，存储后触发二次查询时被利用</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>insert.*into.*values.*SELECT</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     441</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*\+&quot;&quot;&quot;,</div><div><span class="line-num">     442</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*%&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 443</span>             r&quot;&quot;&quot;insert.*into.*values.*SELECT&quot;&quot;&quot;,</div><div><span class="line-num">     444</span>             r&quot;&quot;&quot;INSERT.*SELECT&quot;&quot;&quot;,</div><div><span class="line-num">     445</span>             r&quot;&quot;&quot;UPDATE.*SET.*=.*SELECT&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">二阶SQL注入</div>
+                            <div class="finding-file">config\settings.py:444</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-89</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可在首次请求中注入恶意数据，存储后触发二次查询时被利用</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>INSERT.*SELECT</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     442</span>             r&quot;&quot;&quot;SELECT.*FROM.*WHERE.*%&quot;&quot;&quot;,</div><div><span class="line-num">     443</span>             r&quot;&quot;&quot;insert.*into.*values.*SELECT&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 444</span>             r&quot;&quot;&quot;INSERT.*SELECT&quot;&quot;&quot;,</div><div><span class="line-num">     445</span>             r&quot;&quot;&quot;UPDATE.*SET.*=.*SELECT&quot;&quot;&quot;,</div><div><span class="line-num">     446</span>         ],</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding critical">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">二阶SQL注入</div>
+                            <div class="finding-file">config\settings.py:445</div>
+                        </div>
+                        <span class="tag critical">CRITICAL</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-89</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可在首次请求中注入恶意数据，存储后触发二次查询时被利用</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>UPDATE.*SET.*=.*SELECT</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     443</span>             r&quot;&quot;&quot;insert.*into.*values.*SELECT&quot;&quot;&quot;,</div><div><span class="line-num">     444</span>             r&quot;&quot;&quot;INSERT.*SELECT&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 445</span>             r&quot;&quot;&quot;UPDATE.*SET.*=.*SELECT&quot;&quot;&quot;,</div><div><span class="line-num">     446</span>         ],</div><div><span class="line-num">     447</span>         &quot;risk_description&quot;: &quot;攻击者可在首次请求中注入恶意数据，存储后触发二次查询时被利用&quot;</div>
+                    </div>
+                    
+                    
+                </div><h3 style='margin-top: 20px;'><span class='tag high'>HIGH</span> (14 findings)</h3>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">正则表达式拒绝服务 (ReDoS)</div>
+                            <div class="finding-file">src\analyzers\cve_rag.py:162</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-1333</span>
+                        <span class="tag scope">pattern_match+llm_api</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">存在灾难性回溯的正则表达式，攻击者可构造特制输入导致CPU耗尽</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>(r&#x27;([a-zA-Z0-9_.-]+)\s*[=&gt;&lt;~!]+\s*([a-zA-Z0-9_.*-]+)</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     160</span>                     line = line.strip()</div><div><span class="line-num">     161</span>                     if line and not line.startswith((&#x27;#&#x27;, &#x27;-&#x27;, &#x27;git+&#x27;)):</div><div><span class="line-num"> &gt;&gt;&gt; 162</span>                         match = re.match(r&#x27;([a-zA-Z0-9_.-]+)\s*[=&gt;&lt;~!]+\s*([a-zA-Z0-9_.*-]+)&#x27;, line)</div><div><span class="line-num">     163</span>                         if match:</div><div><span class="line-num">     164</span>                             dependencies.append((match.group(1), match.group(2)))</div>
+                    </div>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #00d4ff; font-size: 13px; font-weight: 600;">Evidence Chain / 证据链</summary>
+                        <div class="evidence">
+                            <div class="evidence-grid">
+                                <div class="evidence-item"><span class="label">File / 文件</span><br><span class="value">src\analyzers\cve_rag.py</span></div>
+                                <div class="evidence-item"><span class="label">Line / 行号</span><br><span class="value">162</span></div>
+                                <div class="evidence-item"><span class="label">Verified / 验证</span><br><span class="value">Confirmed</span></div>
+                                <div class="evidence-item"><span class="label">Integrity / 完整性</span><br><span class="value">5/5</span></div>
+                            </div>
+                            
+                        <div style="margin-top: 8px;">
+                            <div style="color: #aaa; font-size: 12px;">Call Path / 调用路径:</div>
+                            <div style="font-size: 12px; padding: 2px 0;">[8] Line 157: if os.path.exists(req_path):</div><div style="font-size: 12px; padding: 2px 0;">[9] Line 158: with open(req_path, &#x27;r&#x27;, encoding=&#x27;utf-8&#x27;, errors=&#x27;ignore&#x27;) as f:</div><div style="font-size: 12px; padding: 2px 0;">[10] Line 160: line = line.strip()</div><div style="font-size: 12px; padding: 2px 0;">[11] Line 161: if line and not line.startswith((&#x27;#&#x27;, &#x27;-&#x27;, &#x27;git+&#x27;)):</div><div style="font-size: 12px; padding: 2px 0;">[12] Line 162: match = re.match(r&#x27;([a-zA-Z0-9_.-]+)\s*[=&gt;&lt;~!]+\s*([a-zA-Z0-9_.*-]+)&#x27;, line)</div>
+                            <div style="font-size: 12px; margin-top: 4px;">Source / 输入源: <span style="color: #e0e0e0;">未识别到明确输入源</span></div>
+                            <div style="font-size: 12px;">Sink / 危险函数: <span style="color: #e0e0e0;">正则表达式拒绝服务 (ReDoS)</span></div>
+                        </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #28a745;"><strong>Fix / 修复:</strong> 1. 明确版本号的合法字符集，例如只允许数字、点和字母：`[a-zA-Z0-9.]+`。
+2. 限制版本号长度，例如 `{1,50}`。
+3. 使用更严格的版本号格式验证，例如语义化版本号模式。</div>
+                        </div>
+                    </details>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #fd7e14; font-size: 13px; font-weight: 600;">PoC Exploit Code / 利用代码</summary>
+                        <div class="code-block"><pre>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 正则表达式拒绝服务 (ReDoS)
+Target: src\analyzers\cve_rag.py:162
+CWE: CWE-1333
+Risk: 中危
+
+Description:
+存在灾难性回溯的正则表达式，攻击者可构造特制输入导致CPU耗尽
+&quot;&quot;&quot;
+
+def verify_vulnerability():
+    &quot;&quot;&quot;验证此漏洞的通用步骤&quot;&quot;&quot;
+    print(&quot;[*] 建议手工验证步骤:&quot;)
+    print(f&quot;  1. 查看文件: src\analyzers\cve_rag.py&quot;)
+    print(f&quot;  2. 定位到行: 162&quot;)
+    print(f&quot;  3. 分析输入是否可控&quot;)
+    print(f&quot;  4. 跟踪数据流向&quot;)
+    print(f&quot;  5. 构造利用请求&quot;)
+
+if __name__ == &quot;__main__&quot;:
+    verify_vulnerability()
+</pre></div>
+                    </details>
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">跨站脚本 (XSS)</div>
+                            <div class="finding-file">src\analyzers\ast_analyzer.py:205</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-79</span>
+                        <span class="tag scope">pattern_match+llm_api</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可在Web页面中注入恶意脚本，窃取用户Cookie、会话令牌或重定向到恶意网站</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>dangerouslySetInnerHTML</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     203</span>                 r&#x27;innerHTML\s*=&#x27;,</div><div><span class="line-num">     204</span>                 r&#x27;\.html\s*\(&#x27;,</div><div><span class="line-num"> &gt;&gt;&gt; 205</span>                 r&#x27;dangerouslySetInnerHTML&#x27;,</div><div><span class="line-num">     206</span>                 r&#x27;v-html\s*=&#x27;,</div><div><span class="line-num">     207</span>                 r&#x27;document\.write\s*\(&#x27;,</div>
+                    </div>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #00d4ff; font-size: 13px; font-weight: 600;">Evidence Chain / 证据链</summary>
+                        <div class="evidence">
+                            <div class="evidence-grid">
+                                <div class="evidence-item"><span class="label">File / 文件</span><br><span class="value">src\analyzers\ast_analyzer.py</span></div>
+                                <div class="evidence-item"><span class="label">Line / 行号</span><br><span class="value">205</span></div>
+                                <div class="evidence-item"><span class="label">Verified / 验证</span><br><span class="value">Confirmed</span></div>
+                                <div class="evidence-item"><span class="label">Integrity / 完整性</span><br><span class="value">5/5</span></div>
+                            </div>
+                            
+                        <div style="margin-top: 8px;">
+                            <div style="color: #aaa; font-size: 12px;">Call Path / 调用路径:</div>
+                            <div style="font-size: 12px; padding: 2px 0;">[11] Line 197: def _walk_and_find_xss(self, node, content: str, lines: list, findings: list):</div><div style="font-size: 12px; padding: 2px 0;">[12] Line 199: if node.type in (&quot;assignment&quot;, &quot;expression_statement&quot;):</div><div style="font-size: 12px; padding: 2px 0;">[13] Line 200: node_text = content[node.start_byte:node.end_byte]</div><div style="font-size: 12px; padding: 2px 0;">[14] Line 202: xss_patterns = [</div><div style="font-size: 12px; padding: 2px 0;">[15] Line 203: r&#x27;innerHTML\s*=&#x27;,</div>
+                            <div style="font-size: 12px; margin-top: 4px;">Source / 输入源: <span style="color: #e0e0e0;">未识别到明确输入源</span></div>
+                            <div style="font-size: 12px;">Sink / 危险函数: <span style="color: #e0e0e0;">跨站脚本 (XSS)</span></div>
+                        </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #28a745;"><strong>Fix / 修复:</strong> 1. 增强AST分析，追踪变量是否经过HTML转义（如escapeHtml函数）。2. 推荐使用安全的DOM操作（如textContent）或模板引擎的自动转义功能。3. 实施内容安全策略（CSP）作为纵深防御。</div>
+                        </div>
+                    </details>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #fd7e14; font-size: 13px; font-weight: 600;">PoC Exploit Code / 利用代码</summary>
+                        <div class="code-block"><pre>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: Cross-Site Scripting (XSS)
+Target: src\analyzers\ast_analyzer.py:205
+CWE: CWE-79
+&quot;&quot;&quot;
+
+import requests
+
+def test_xss(target_url, param=&quot;q&quot;):
+    &quot;&quot;&quot;检测反射型 XSS 漏洞&quot;&quot;&quot;
+    payload = &quot;&lt;script&gt;alert(&#x27;XSS&#x27;)&lt;/script&gt;&quot;
+
+    try:
+        params = {param: payload}
+        r = requests.get(target_url, params=params, timeout=10)
+        if payload in r.text:
+            print(f&quot;[!] 发现 XSS 漏洞! Payload 在响应中未转义输出&quot;)
+            print(f&quot;[!] URL: {r.url}&quot;)
+     </pre></div>
+                    </details>
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">路径遍历</div>
+                            <div class="finding-file">src\exploit\poc_generator.py:217</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-22</span>
+                        <span class="tag scope">pattern_match+llm_api</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可读取服务器上的任意文件，包括配置文件、密码文件等敏感信息</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>../../../</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     215</span>     &quot;&quot;&quot;检测路径遍历漏洞&quot;&quot;&quot;</div><div><span class="line-num">     216</span>     payloads = [</div><div><span class="line-num"> &gt;&gt;&gt; 217</span>         &quot;../../../etc/passwd&quot;,</div><div><span class="line-num">     218</span>         &quot;....//....//....//etc/passwd&quot;,</div><div><span class="line-num">     219</span>         &quot;../../../../windows/win.ini&quot;,</div>
+                    </div>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #00d4ff; font-size: 13px; font-weight: 600;">Evidence Chain / 证据链</summary>
+                        <div class="evidence">
+                            <div class="evidence-grid">
+                                <div class="evidence-item"><span class="label">File / 文件</span><br><span class="value">src\exploit\poc_generator.py</span></div>
+                                <div class="evidence-item"><span class="label">Line / 行号</span><br><span class="value">217</span></div>
+                                <div class="evidence-item"><span class="label">Verified / 验证</span><br><span class="value">Confirmed</span></div>
+                                <div class="evidence-item"><span class="label">Integrity / 完整性</span><br><span class="value">5/5</span></div>
+                            </div>
+                            
+                        <div style="margin-top: 8px;">
+                            <div style="color: #aaa; font-size: 12px;">Call Path / 调用路径:</div>
+                            <div style="font-size: 12px; padding: 2px 0;">[8] Line 200: test_command_injection(&quot;http://target.com/page&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[9] Line 203: def _poc_path_traversal(self, finding: dict) -&gt; str:</div><div style="font-size: 12px; padding: 2px 0;">[10] Line 209: CWE: {finding.get(&quot;cwe&quot;, &quot;CWE-22&quot;)}</div><div style="font-size: 12px; padding: 2px 0;">[11] Line 214: def test_path_traversal(target_url, param=&quot;file&quot;):</div><div style="font-size: 12px; padding: 2px 0;">[12] Line 216: payloads = [</div>
+                            <div style="font-size: 12px; margin-top: 4px;">Source / 输入源: <span style="color: #e0e0e0;">未识别到明确输入源</span></div>
+                            <div style="font-size: 12px;">Sink / 危险函数: <span style="color: #e0e0e0;">路径遍历</span></div>
+                        </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #28a745;"><strong>Fix / 修复:</strong> 1. 对 finding[&#x27;file&#x27;] 进行严格的路径规范化处理，例如使用 os.path.normpath 和 os.path.realpath 解析路径，并确保解析后的路径仍在项目目录内。2. 使用白名单机制，只允许预定义的文件名或路径模式。3. 避免直接使用用户输入的文件路径进行文件操作，如果必须使用，应进行严格的验证和过滤。</div>
+                        </div>
+                    </details>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #fd7e14; font-size: 13px; font-weight: 600;">PoC Exploit Code / 利用代码</summary>
+                        <div class="code-block"><pre>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: Path Traversal
+Target: src\exploit\poc_generator.py:217
+CWE: CWE-22
+&quot;&quot;&quot;
+
+import requests
+
+def test_path_traversal(target_url, param=&quot;file&quot;):
+    &quot;&quot;&quot;检测路径遍历漏洞&quot;&quot;&quot;
+    payloads = [
+        &quot;../../../etc/passwd&quot;,
+        &quot;....//....//....//etc/passwd&quot;,
+        &quot;../../../../windows/win.ini&quot;,
+        &quot;%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd&quot;,
+        &quot;..\\..\\..\\windows\\win.ini&quot;,
+    ]
+
+    indicators = [&quot;root:&quot;, &quot;admin:&quot;, &quot;</pre></div>
+                    </details>
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">路径遍历</div>
+                            <div class="finding-file">src\exploit\poc_generator.py:218</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-22</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可读取服务器上的任意文件，包括配置文件、密码文件等敏感信息</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>..//....//..../</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     216</span>     payloads = [</div><div><span class="line-num">     217</span>         &quot;../../../etc/passwd&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 218</span>         &quot;....//....//....//etc/passwd&quot;,</div><div><span class="line-num">     219</span>         &quot;../../../../windows/win.ini&quot;,</div><div><span class="line-num">     220</span>         &quot;%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">路径遍历</div>
+                            <div class="finding-file">src\exploit\poc_generator.py:219</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-22</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可读取服务器上的任意文件，包括配置文件、密码文件等敏感信息</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>../../../../</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     217</span>         &quot;../../../etc/passwd&quot;,</div><div><span class="line-num">     218</span>         &quot;....//....//....//etc/passwd&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 219</span>         &quot;../../../../windows/win.ini&quot;,</div><div><span class="line-num">     220</span>         &quot;%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd&quot;,</div><div><span class="line-num">     221</span>         &quot;..\\\\..\\\\..\\\\windows\\\\win.ini&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">整数溢出/环绕</div>
+                            <div class="finding-file">src\exploit\poc_generator.py:531</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-190</span>
+                        <span class="tag scope">pattern_match+llm_api</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">整数溢出可导致缓冲区溢出、逻辑错误或拒绝服务攻击</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>int(f&quot;  🔎 输入源: {ev.get(&#x27;input</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     529</span>                     for step in ev[&#x27;call_path&#x27;][-5:]:  # 最后 5 步</div><div><span class="line-num">     530</span>                         print(f&quot;     [{step[&#x27;step&#x27;]}] 行 {step[&#x27;line&#x27;]}: {step[&#x27;code&#x27;]}&quot;)</div><div><span class="line-num"> &gt;&gt;&gt; 531</span>                 print(f&quot;  🔎 输入源: {ev.get(&#x27;input_source&#x27;, &#x27;未知&#x27;)}&quot;)</div><div><span class="line-num">     532</span>                 print(f&quot;  🎯 危险函数: {ev.get(&#x27;sink_function&#x27;, &#x27;未知&#x27;)}&quot;)</div><div><span class="line-num">     533</span>                 print(f&quot;  ✅ 验证: {&#x27;已确认&#x27; if ev[&#x27;verification&#x27;][&#x27;is_real&#x27;] else &#x27;未确认&#x27;}&quot;)</div>
+                    </div>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #00d4ff; font-size: 13px; font-weight: 600;">Evidence Chain / 证据链</summary>
+                        <div class="evidence">
+                            <div class="evidence-grid">
+                                <div class="evidence-item"><span class="label">File / 文件</span><br><span class="value">src\exploit\poc_generator.py</span></div>
+                                <div class="evidence-item"><span class="label">Line / 行号</span><br><span class="value">531</span></div>
+                                <div class="evidence-item"><span class="label">Verified / 验证</span><br><span class="value">Confirmed</span></div>
+                                <div class="evidence-item"><span class="label">Integrity / 完整性</span><br><span class="value">5/5</span></div>
+                            </div>
+                            
+                        <div style="margin-top: 8px;">
+                            <div style="color: #aaa; font-size: 12px;">Call Path / 调用路径:</div>
+                            <div style="font-size: 12px; padding: 2px 0;">[12] Line 526: print(f&quot;  📍 位置: {ev[&#x27;file_location&#x27;][&#x27;file&#x27;]}:{ev[&#x27;file_location&#x27;][&#x27;line&#x27;]}&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[13] Line 527: if ev.get(&#x27;call_path&#x27;):</div><div style="font-size: 12px; padding: 2px 0;">[14] Line 528: print(f&quot;  🔀 调用路径:&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[15] Line 530: print(f&quot;     [{step[&#x27;step&#x27;]}] 行 {step[&#x27;line&#x27;]}: {step[&#x27;code&#x27;]}&quot;)</div><div style="font-size: 12px; padding: 2px 0;">[16] Line 531: print(f&quot;  🔎 输入源: {ev.get(&#x27;input_source&#x27;, &#x27;未知&#x27;)}&quot;)</div>
+                            <div style="font-size: 12px; margin-top: 4px;">Source / 输入源: <span style="color: #e0e0e0;">未识别到明确输入源</span></div>
+                            <div style="font-size: 12px;">Sink / 危险函数: <span style="color: #e0e0e0;">整数溢出/环绕</span></div>
+                        </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #28a745;"><strong>Fix / 修复:</strong> 1. 对 real_findings 列表的大小进行限制，例如设置最大处理数量。2. 在循环中添加超时机制或进度报告，避免长时间无响应。3. 考虑使用生成器或流式处理，避免一次性加载大量数据到内存。</div>
+                        </div>
+                    </details>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: #fd7e14; font-size: 13px; font-weight: 600;">PoC Exploit Code / 利用代码</summary>
+                        <div class="code-block"><pre>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 整数溢出/环绕
+Target: src\exploit\poc_generator.py:531
+CWE: CWE-190
+Risk: 中危
+
+Description:
+整数溢出可导致缓冲区溢出、逻辑错误或拒绝服务攻击
+&quot;&quot;&quot;
+
+def verify_vulnerability():
+    &quot;&quot;&quot;验证此漏洞的通用步骤&quot;&quot;&quot;
+    print(&quot;[*] 建议手工验证步骤:&quot;)
+    print(f&quot;  1. 查看文件: src\exploit\poc_generator.py&quot;)
+    print(f&quot;  2. 定位到行: 531&quot;)
+    print(f&quot;  3. 分析输入是否可控&quot;)
+    print(f&quot;  4. 跟踪数据流向&quot;)
+    print(f&quot;  5. 构造利用请求&quot;)
+
+if __name__ == &quot;__main__&quot;:
+    verify_vulnerability()
+</pre></div>
+                    </details>
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">跨站脚本 (XSS)</div>
+                            <div class="finding-file">config\settings.py:126</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-79</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可在Web页面中注入恶意脚本，窃取用户Cookie、会话令牌或重定向到恶意网站</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>dangerouslySetInnerHTML</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     124</span>             r&quot;&quot;&quot;innerHTML\s*=\s*[&quot;&#x27;][^&quot;&#x27;]*\${&quot;&quot;&quot;,</div><div><span class="line-num">     125</span>             r&quot;&quot;&quot;\.html\s*\(\s*[&quot;&#x27;][^&quot;&#x27;]*\${&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 126</span>             r&quot;&quot;&quot;dangerouslySetInnerHTML&quot;&quot;&quot;,</div><div><span class="line-num">     127</span>             r&quot;&quot;&quot;v-html\s*=&quot;&quot;&quot;,</div><div><span class="line-num">     128</span>             r&quot;&quot;&quot;document\.write\s*\(\s*[&quot;&#x27;][^&quot;&#x27;]*\${&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">跨站请求伪造 (CSRF)</div>
+                            <div class="finding-file">config\settings.py:184</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-352</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可伪造用户请求执行非授权操作，如修改密码、转账等敏感操作</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>@csrf_exempt</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     182</span>         &quot;cwe&quot;: &quot;CWE-352&quot;,</div><div><span class="line-num">     183</span>         &quot;patterns&quot;: [</div><div><span class="line-num"> &gt;&gt;&gt; 184</span>             r&quot;&quot;&quot;@csrf_exempt&quot;&quot;&quot;,</div><div><span class="line-num">     185</span>             r&quot;&quot;&quot;csrf_exempt&quot;&quot;&quot;,</div><div><span class="line-num">     186</span>             r&quot;&quot;&quot;csrf\.exempt&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">跨站请求伪造 (CSRF)</div>
+                            <div class="finding-file">config\settings.py:185</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-352</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可伪造用户请求执行非授权操作，如修改密码、转账等敏感操作</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>csrf_exempt</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     183</span>         &quot;patterns&quot;: [</div><div><span class="line-num">     184</span>             r&quot;&quot;&quot;@csrf_exempt&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 185</span>             r&quot;&quot;&quot;csrf_exempt&quot;&quot;&quot;,</div><div><span class="line-num">     186</span>             r&quot;&quot;&quot;csrf\.exempt&quot;&quot;&quot;,</div><div><span class="line-num">     187</span>             r&quot;&quot;&quot;without_csrf&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">跨站请求伪造 (CSRF)</div>
+                            <div class="finding-file">config\settings.py:187</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-352</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可伪造用户请求执行非授权操作，如修改密码、转账等敏感操作</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>without_csrf</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     185</span>             r&quot;&quot;&quot;csrf_exempt&quot;&quot;&quot;,</div><div><span class="line-num">     186</span>             r&quot;&quot;&quot;csrf\.exempt&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 187</span>             r&quot;&quot;&quot;without_csrf&quot;&quot;&quot;,</div><div><span class="line-num">     188</span>             r&quot;&quot;&quot;#csrf&quot;&quot;&quot;,</div><div><span class="line-num">     189</span>             r&quot;&quot;&quot;skip_csrf&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">跨站请求伪造 (CSRF)</div>
+                            <div class="finding-file">config\settings.py:188</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-352</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可伪造用户请求执行非授权操作，如修改密码、转账等敏感操作</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>#csrf</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     186</span>             r&quot;&quot;&quot;csrf\.exempt&quot;&quot;&quot;,</div><div><span class="line-num">     187</span>             r&quot;&quot;&quot;without_csrf&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 188</span>             r&quot;&quot;&quot;#csrf&quot;&quot;&quot;,</div><div><span class="line-num">     189</span>             r&quot;&quot;&quot;skip_csrf&quot;&quot;&quot;,</div><div><span class="line-num">     190</span>         ],</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">跨站请求伪造 (CSRF)</div>
+                            <div class="finding-file">config\settings.py:189</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-352</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">攻击者可伪造用户请求执行非授权操作，如修改密码、转账等敏感操作</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>skip_csrf</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     187</span>             r&quot;&quot;&quot;without_csrf&quot;&quot;&quot;,</div><div><span class="line-num">     188</span>             r&quot;&quot;&quot;#csrf&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 189</span>             r&quot;&quot;&quot;skip_csrf&quot;&quot;&quot;,</div><div><span class="line-num">     190</span>         ],</div><div><span class="line-num">     191</span>         &quot;risk_description&quot;: &quot;攻击者可伪造用户请求执行非授权操作，如修改密码、转账等敏感操作&quot;</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">内存泄漏/资源未释放</div>
+                            <div class="finding-file">config\settings.py:398</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-401</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">资源未正确释放可能导致内存耗尽，造成拒绝服务</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>FileInputStream</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     396</span>         &quot;patterns&quot;: [</div><div><span class="line-num">     397</span>             r&quot;&quot;&quot;open\(.*[&#x27;&quot;&quot;][^&#x27;&quot;&quot;]*[&#x27;&quot;&quot;]\)\s*$&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 398</span>             r&quot;&quot;&quot;FileInputStream&quot;&quot;&quot;,</div><div><span class="line-num">     399</span>             r&quot;&quot;&quot;BufferedReader.*open&quot;&quot;&quot;,</div><div><span class="line-num">     400</span>             r&quot;&quot;&quot;new\s+Thread\(\)&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+                <div class="finding high">
+                    <div class="finding-header">
+                        <div>
+                            <div class="finding-title">内存泄漏/资源未释放</div>
+                            <div class="finding-file">config\settings.py:399</div>
+                        </div>
+                        <span class="tag high">HIGH</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <span class="tag cwe">CWE-401</span>
+                        <span class="tag scope">pattern_match</span>
+                    </div>
+                    <p style="font-size: 13px; color: #aaa; line-height: 1.5;">资源未正确释放可能导致内存耗尽，造成拒绝服务</p>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;"><strong>Match:</strong> <code>BufferedReader.*open</code></div>
+                    
+                    <div class="code-block">
+                        <div><span class="line-num">     397</span>             r&quot;&quot;&quot;open\(.*[&#x27;&quot;&quot;][^&#x27;&quot;&quot;]*[&#x27;&quot;&quot;]\)\s*$&quot;&quot;&quot;,</div><div><span class="line-num">     398</span>             r&quot;&quot;&quot;FileInputStream&quot;&quot;&quot;,</div><div><span class="line-num"> &gt;&gt;&gt; 399</span>             r&quot;&quot;&quot;BufferedReader.*open&quot;&quot;&quot;,</div><div><span class="line-num">     400</span>             r&quot;&quot;&quot;new\s+Thread\(\)&quot;&quot;&quot;,</div><div><span class="line-num">     401</span>             r&quot;&quot;&quot;\.connect\(\)&quot;&quot;&quot;,</div>
+                    </div>
+                    
+                    
+                </div>
+        </div>
+
+        <!-- Type Distribution -->
+        <div class="card">
+            <h2>&#128202; Categories / 漏洞分类</h2>
+            <table>
+                <tr><th>Type / 漏洞类型</th><th>Count / 数量</th><th>Severity / 等级</th><th>CWE</th></tr>
+                <tr><td>二阶SQL注入</td><td>7</td><td><span class="tag critical">高危</span></td></tr><tr><td>跨站请求伪造 (CSRF)</td><td>5</td><td><span class="tag high">中危</span></td></tr><tr><td>不安全的证书验证</td><td>5</td><td><span class="tag critical">高危</span></td></tr><tr><td>明文存储敏感信息</td><td>4</td><td><span class="tag critical">高危</span></td></tr><tr><td>硬编码密钥/凭证</td><td>3</td><td><span class="tag critical">高危</span></td></tr><tr><td>路径遍历</td><td>3</td><td><span class="tag high">中危</span></td></tr><tr><td>XML外部实体注入 (XXE)</td><td>3</td><td><span class="tag critical">高危</span></td></tr><tr><td>条件竞争/TOCTOU</td><td>3</td><td><span class="tag critical">高危</span></td></tr><tr><td>SQL注入</td><td>2</td><td><span class="tag critical">高危</span></td></tr><tr><td>服务端模板注入 (SSTI)</td><td>2</td><td><span class="tag critical">高危</span></td></tr><tr><td>跨站脚本 (XSS)</td><td>2</td><td><span class="tag high">中危</span></td></tr><tr><td>LDAP注入</td><td>2</td><td><span class="tag critical">高危</span></td></tr><tr><td>弱加密算法</td><td>2</td><td><span class="tag critical">高危</span></td></tr><tr><td>内存泄漏/资源未释放</td><td>2</td><td><span class="tag high">中危</span></td></tr><tr><td>不安全反序列化</td><td>1</td><td><span class="tag critical">高危</span></td></tr><tr><td>正则表达式拒绝服务 (ReDoS)</td><td>1</td><td><span class="tag high">中危</span></td></tr><tr><td>整数溢出/环绕</td><td>1</td><td><span class="tag high">中危</span></td></tr><tr><td>不安全文件上传</td><td>1</td><td><span class="tag critical">高危</span></td></tr><tr><td>JWT安全漏洞</td><td>1</td><td><span class="tag critical">高危</span></td></tr><tr><td>CRLF注入/HTTP响应拆分</td><td>1</td><td><span class="tag critical">高危</span></td></tr><tr><td>原型链污染 (Prototype Pollution)</td><td>1</td><td><span class="tag critical">高危</span></td></tr>
+            </table>
+        </div>
+
+        <!-- Fix Suggestions -->
+        <div class="card" id="remediation">
+            <h2>&#128295; Remediation / 修复建议</h2>
+            <div class="evidence" style="margin-bottom: 8px;"><strong>二阶SQL注入</strong><br><span style="color: #aaa; font-size: 13px;">根据具体漏洞类型采取相应的安全修复措施</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>跨站请求伪造 (CSRF)</strong><br><span style="color: #aaa; font-size: 13px;">使用 CSRF Token，验证请求来源 Referer</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>不安全的证书验证</strong><br><span style="color: #aaa; font-size: 13px;">根据具体漏洞类型采取相应的安全修复措施</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>明文存储敏感信息</strong><br><span style="color: #aaa; font-size: 13px;">根据具体漏洞类型采取相应的安全修复措施</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>硬编码密钥/凭证</strong><br><span style="color: #aaa; font-size: 13px;">使用环境变量或密钥管理服务，将密钥移出代码仓库</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>路径遍历</strong><br><span style="color: #aaa; font-size: 13px;">对文件路径进行规范化校验，禁止使用 ../ 相对路径</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>XML外部实体注入 (XXE)</strong><br><span style="color: #aaa; font-size: 13px;">禁用 XML 解析器的外部实体加载功能</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>条件竞争/TOCTOU</strong><br><span style="color: #aaa; font-size: 13px;">根据具体漏洞类型采取相应的安全修复措施</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>SQL注入</strong><br><span style="color: #aaa; font-size: 13px;">使用参数化查询或 PreparedStatement，对用户输入进行严格的类型检查和过滤</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>服务端模板注入 (SSTI)</strong><br><span style="color: #aaa; font-size: 13px;">避免将用户输入直接传入模板渲染函数</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>跨站脚本 (XSS)</strong><br><span style="color: #aaa; font-size: 13px;">对输出进行 HTML 实体编码，使用 Content-Security-Policy 头</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>LDAP注入</strong><br><span style="color: #aaa; font-size: 13px;">对 LDAP 查询参数进行转义和过滤</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>弱加密算法</strong><br><span style="color: #aaa; font-size: 13px;">根据具体漏洞类型采取相应的安全修复措施</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>内存泄漏/资源未释放</strong><br><span style="color: #aaa; font-size: 13px;">根据具体漏洞类型采取相应的安全修复措施</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>不安全反序列化</strong><br><span style="color: #aaa; font-size: 13px;">避免反序列化不可信数据，使用安全的数据格式如 JSON</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>正则表达式拒绝服务 (ReDoS)</strong><br><span style="color: #aaa; font-size: 13px;">根据具体漏洞类型采取相应的安全修复措施</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>整数溢出/环绕</strong><br><span style="color: #aaa; font-size: 13px;">根据具体漏洞类型采取相应的安全修复措施</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>不安全文件上传</strong><br><span style="color: #aaa; font-size: 13px;">限制上传文件类型，对上传文件进行安全扫描</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>JWT安全漏洞</strong><br><span style="color: #aaa; font-size: 13px;">禁用 'none' 算法，使用强密钥签名，验证签名和过期时间</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>CRLF注入/HTTP响应拆分</strong><br><span style="color: #aaa; font-size: 13px;">对 HTTP 头部参数进行换行符过滤</span></div>
+<div class="evidence" style="margin-bottom: 8px;"><strong>原型链污染 (Prototype Pollution)</strong><br><span style="color: #aaa; font-size: 13px;">根据具体漏洞类型采取相应的安全修复措施</span></div>
+
+        </div>
+
+        <!-- About -->
+        <div class="card" id="about" style="text-align:center;">
+            <p style="color:#555;font-size:12px;">
+                Generated by LLM Security Audit System v1.0.0<br>
+                Scan Date:  &bull; Project: xiangxiangbigqueen_llm-security-audit
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Severity Chart
+        new Chart(document.getElementById('severityChart'), {
+            type: 'doughnut',
+            data: {
+                labels: ['Critical / 高危 (38)', 'High / 中危 (14)', 'Medium / 低危 (0)', 'Info / 信息 (0)'],
+                datasets: [{
+                    data: [38, 14, 0, 0],
+                    backgroundColor: ['#dc3545', '#fd7e14', '#ffc107', '#0d6efd'],
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#e0e0e0' } } } }
+        });
+
+        // Type Chart
+        new Chart(document.getElementById('typeChart'), {
+            type: 'bar',
+            data: {
+                labels: ['二阶SQL注入','跨站请求伪造 (CSRF','不安全的证书验证','明文存储敏感信息','硬编码密钥/凭证','路径遍历','XML外部实体注入 (X','条件竞争/TOCTOU','SQL注入','服务端模板注入 (SST'],
+                datasets: [{
+                    label: 'Count',
+                    data: [7,5,5,4,3,3,3,3,2,2],
+                    backgroundColor: ['#dc3545','#fd7e14','#ffc107','#28a745','#0d6efd','#6f42c1','#20c997','#e83e8c','#17a2b8','#6c757d'],
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { x: { ticks: { color: '#888' } }, y: { ticks: { color: '#888', stepSize: 1 } } }
+            }
+        });
+
+        // Accordion
+        document.querySelectorAll('.finding-header').forEach(h => {
+            h.addEventListener('click', () => {
+                h.nextElementSibling.classList.toggle('open');
+            });
+        });
+
+        // Table filter
+        function filterSeverity(btn, sev) {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            var rows = document.querySelectorAll('#findingsTableBody tr');
+            rows.forEach(r => {
+                if(sev === 'all') { r.style.display = ''; }
+                else { r.style.display = r.dataset.severity === sev ? '' : 'none'; }
+            });
+        }
+
+        // Table search
+        function filterTable() {
+            var input = document.getElementById('searchInput').value.toLowerCase();
+            var rows = document.querySelectorAll('#findingsTableBody tr');
+            rows.forEach(r => {
+                r.style.display = r.textContent.toLowerCase().includes(input) ? '' : 'none';
+            });
+        }
+
+        // Table sort
+        var sortDir = {};
+        function sortTable(col) {
+            sortDir[col] = !(sortDir[col] || false);
+            var dir = sortDir[col] ? 1 : -1;
+            var tbody = document.getElementById('findingsTableBody');
+            var rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort((a,b) => {
+                var va = a.cells[col].textContent.trim(), vb = b.cells[col].textContent.trim();
+                return va.localeCompare(vb) * dir;
+            });
+            rows.forEach(r => tbody.appendChild(r));
+        }
+
+        // Tab switch
+        function switchTab(el, name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            el.classList.add('active');
+        }
+    </script>
+</body>
+</html>

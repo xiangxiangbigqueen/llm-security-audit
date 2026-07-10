@@ -1,7 +1,6 @@
 dist/
 build/
 *.spec
-reports/
 workspace/
 output/
 __pycache__/
