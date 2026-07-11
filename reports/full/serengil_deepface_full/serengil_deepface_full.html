@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - deepface</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> deepface | <strong>语言:</strong> {"Python": 100.0} | <strong>时间:</strong> 2026-07-12 03:42:39</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对开源项目DeepFace（https://github.com/serengil/deepface）进行，该项目是一个基于Python的人脸识别框架，包含105个文件，共计19479行代码。审计发现多个高危漏洞，包括服务器端请求伪造（SSRF）、路径遍历、信息泄露以及不安全的文件解压等。这些漏洞可能导致内部网络探测、敏感文件读取、云服务凭证泄露以及远程代码执行等严重后果。建议开发团队立即修复高危漏洞，并加强输入验证和异常处理机制。</p>
+    <p><strong>风险评分:</strong> 85/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>3</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>4</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>3</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>2</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-8728F6F5 - SSRF (Server-Side Request Forgery)</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deepface/api/src/modules/core/routes.py:42</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>str_img: str = cast(str, input_args.get(img_key))
+...
+return str_img</code></pre>
+                <p><strong>数据流:</strong> 用户通过JSON或表单提交的img参数 -&gt; extract_image_from_request函数返回 -&gt; 传递给service.represent/verify/analyze/register等函数 -&gt; 这些函数可能将img作为URL传递给requests库或文件读取函数</p>
+                <p><strong>判断理由:</strong> extract_image_from_request函数接受用户提供的img参数，可以是base64编码、文件路径或URL。该值直接传递给下游服务函数，如果服务函数使用该值作为URL发起网络请求，攻击者可以构造恶意URL指向内部服务（如http://localhost:6379/）或云元数据端点（如http://169.254.169.254/），导致SSRF攻击。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用SSRF漏洞探测内部网络结构、访问内部服务（如Redis、数据库）、获取云服务元数据（如AWS临时凭证）、读取本地文件（如果支持file://协议），甚至可能通过内部服务漏洞实现远程代码执行。该漏洞严重性高，因为DeepFace API通常部署在内部网络或云环境中，内部服务敏感信息容易泄露。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+SSRF PoC for DeepFace API - 仅供研究使用
+&quot;&quot;&quot;
+
+import requests
+import json
+
+# 目标API地址
+TARGET_URL = &quot;http://target-deepface-api:5000&quot;
+
+# PoC 1: 探测内部Redis服务 (端口6379)
+def poc_redis_ssrf():
+    &quot;&quot;&quot;
+    利用SSRF探测内部Redis服务
+    &quot;&quot;&quot;
+    payload = {
+        &quot;img&quot;: &quot;http://localhost:6379/&quot;
+    }
+    headers = {&quot;Content-Type&quot;: &quot;application/json&quot;}
+    
+    </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-F62E5C7A - 路径遍历 (Path Traversal)</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deepface/api/src/modules/core/routes.py:42</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>str_img: str = cast(str, input_args.get(img_key))
+...
+return str_img</code></pre>
+                <p><strong>数据流:</strong> 用户通过JSON或表单提交的img参数 -&gt; extract_image_from_request函数返回 -&gt; 传递给service.represent/verify/analyze/register等函数 -&gt; 这些函数可能将img作为文件路径传递给open()或类似函数</p>
+                <p><strong>判断理由:</strong> extract_image_from_request函数接受用户提供的img参数，可以是文件路径。该值未经过任何路径规范化或白名单校验，直接传递给下游服务函数。如果服务函数使用该值作为文件路径读取文件，攻击者可以构造类似&#x27;../../etc/passwd&#x27;的路径读取任意系统文件。</p>
+                <p><strong>影响分析:</strong> 攻击者可以读取服务器上的任意文件，包括：系统配置文件（/etc/passwd、/etc/shadow）、应用配置文件（数据库密码、API密钥）、源代码文件、SSL私钥等敏感信息。这可能导致服务器完全沦陷、数据泄露、横向移动等严重后果。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+DeepFace API 路径遍历漏洞 PoC
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import requests
+import json
+import sys
+
+# 目标API地址，请替换为实际地址
+TARGET_URL = &quot;http://localhost:5000&quot;
+
+def poc_path_traversal_read_file(file_path):
+    &quot;&quot;&quot;
+    利用路径遍历漏洞读取任意文件
+    
+    Args:
+        file_path: 要读取的文件路径，如 &#x27;../../etc/passwd&#x27;
+    &quot;&quot;&quot;
+    # 使用 /represent 端点进行利用
+    endpoint = f&quot;{TARGET_URL}/represent&quot;
+   </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-29A6D1D6 - 信息泄露 - 异常信息返回</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> deepface/api/src/modules/core/routes.py:63</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>except Exception as err:
+    return {&quot;exception&quot;: str(err)}, 400</code></pre>
+                <p><strong>数据流:</strong> 用户输入 -&gt; extract_image_from_request函数抛出异常 -&gt; 异常信息直接返回给用户</p>
+                <p><strong>判断理由:</strong> 多个路由处理函数（represent、verify、analyze、register）在捕获异常时直接将异常信息返回给客户端。这可能导致敏感信息泄露，如文件路径、数据库结构、内部实现细节等，有助于攻击者进一步攻击。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过发送精心构造的恶意请求（如缺少必要字段、无效文件、错误格式数据等）触发异常，从而获取内部实现细节。泄露的信息可能包括：服务器文件路径结构、使用的库版本、数据库配置信息、内部变量名称和值、系统环境信息等。这些信息虽然单独看危害较低，但可以作为进一步攻击的跳板，帮助攻击者了解系统架构并制定更精确的攻击策略。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC代码 - 仅供安全研究使用
+漏洞：DeepFace API 异常信息泄露
+&quot;&quot;&quot;
+
+import requests
+import json
+
+# 目标API地址（请替换为实际测试地址）
+TARGET_URL = &quot;http://localhost:5000&quot;
+
+def test_represent_exception():
+    &quot;&quot;&quot;
+    测试 /represent 路由的异常信息泄露
+    通过发送无效的JSON请求触发异常
+    &quot;&quot;&quot;
+    print(&quot;[*] 测试 /represent 路由异常信息泄露...&quot;)
+    
+    # 构造恶意请求：缺少必要字段 &#x27;img&#x27;
+    payload = {
+        &quot;model_name&quot;: &quot</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-A2298577 - 信息泄露 - 异常信息泄露</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> deepface/api/src/modules/core/service.py:33</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>return {&quot;error&quot;: f&quot;Exception while representing: {str(err)} - {tb_str}&quot;}, 400</code></pre>
+                <p><strong>数据流:</strong> 异常对象(err)和traceback字符串(tb_str)被直接拼接到HTTP响应中返回给客户端</p>
+                <p><strong>判断理由:</strong> 所有异常处理函数(represent, verify, analyze, register, search, build_index)都将完整的异常信息和traceback堆栈信息返回给客户端。这可能导致敏感信息泄露，如文件路径、数据库结构、内部API调用细节等，攻击者可以利用这些信息进行进一步攻击。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过构造恶意输入触发异常，获取包含以下敏感信息的完整堆栈跟踪：1) 服务器文件系统绝对路径，暴露应用部署结构；2) 内部API调用链和依赖关系；3) 数据库连接字符串和结构信息；4) 第三方库版本信息，可用于针对性攻击；5) 业务逻辑实现细节。这些信息可被用于进一步攻击，如路径遍历、SQL注入、远程代码执行等。CVSS评分约5.3（中等），但结合其他漏洞可能升级为严重。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+DeepFace API 异常信息泄露漏洞 PoC
+仅供安全研究使用 - 请勿用于非法用途
+&quot;&quot;&quot;
+
+import requests
+import sys
+import json
+
+# 目标API基础URL
+BASE_URL = &quot;http://localhost:5000&quot;  # 请根据实际部署修改
+
+def poc_represent_exception():
+    &quot;&quot;&quot;
+    利用represent接口触发异常，获取堆栈信息
+    通过传入无效的文件路径触发异常
+    &quot;&quot;&quot;
+    print(&quot;[*] 测试 represent 接口异常信息泄露...&quot;)
+    
+    # 构造恶意请求 - 使用不存在的文件路径
+    payload = {
+        &quot;img_path&quot;: &quot;/etc/passwd&quot;, </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-7FDF8B86 - SSRF (服务端请求伪造)</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deepface/commons/image_utils.py:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if img.lower().startswith((&quot;http://&quot;, &quot;https://&quot;)):
+    return load_image_from_web(url=img), img</code></pre>
+                <p><strong>数据流:</strong> 用户输入img -&gt; load_image函数 -&gt; 检测到URL前缀 -&gt; 调用load_image_from_web(url=img) -&gt; requests.get(url, stream=True, timeout=60) -&gt; 直接请求用户提供的URL</p>
+                <p><strong>判断理由:</strong> load_image函数接受用户输入的字符串，当字符串以http://或https://开头时，会直接发起网络请求。攻击者可以构造恶意URL（如内网地址http://169.254.169.254/、file://协议等）来发起SSRF攻击，探测内网服务或访问敏感资源。虽然代码中限制了http/https前缀，但未对URL进行任何校验或白名单过滤，存在被利用的风险。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此SSRF漏洞实现以下危害：1) 探测云服务元数据，获取临时凭证（AWS IAM Role、GCP Service Account等）；2) 扫描内网开放端口和服务，绘制内网拓扑；3) 访问内网敏感服务（如数据库、Redis、内部管理系统等）；4) 绕过防火墙访问内部资源；5) 在某些情况下可能实现远程代码执行（如访问内部Jenkins、Kubernetes API等）。由于DeepFace常用于人脸识别系统，可能部署在云环境或企业内网，SSRF漏洞的危害性较高。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+SSRF PoC for DeepFace - VULN-7FDF8B86
+仅供研究使用 - For Research Purposes Only
+&quot;&quot;&quot;
+
+import requests
+import sys
+
+# ============================================================
+# PoC 1: 探测云元数据服务 (AWS/GCP/Azure)
+# ============================================================
+def poc_cloud_metadata():
+    &quot;&quot;&quot;
+    利用SSRF访问云服务元数据端点
+    目标: 探测内网敏感信息
+    &quot;&quot;&quot;
+    print(&quot;[*] PoC 1: 探测云元数据服务&quot;)
+    print(&quot;[*] 仅供研</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-F7A34AE2 - 不安全的文件解压</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deepface/commons/weight_utils.py:68</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>with zipfile.ZipFile(f&quot;{target_file}.zip&quot;, &quot;r&quot;) as zip_ref:
+    zip_ref.extractall(os.path.join(home, &quot;.deepface/weights&quot;))</code></pre>
+                <p><strong>数据流:</strong> 从外部下载的zip文件被解压到本地目录，未对zip文件内容进行安全检查</p>
+                <p><strong>判断理由:</strong> 使用zipfile.extractall()存在zip滑洞攻击风险。恶意构造的zip文件可能包含符号链接或路径遍历文件名，导致文件被解压到预期目录之外。应使用extract()方法并验证每个文件的路径</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致任意文件写入，攻击者可以将恶意文件写入目标系统的任意位置（受限于运行DeepFace进程的权限）。具体影响包括：1) 覆盖用户配置文件（如~/.bashrc、~/.ssh/authorized_keys）实现持久化；2) 写入cron任务或systemd服务实现远程命令执行；3) 覆盖系统关键文件导致拒绝服务；4) 在Web应用场景下，可写入Webshell实现远程控制。由于DeepFace通常以用户权限运行，影响范围限于用户可写目录，但结合其他漏洞可提升权限。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全的文件解压 - Zip滑洞攻击
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import zipfile
+import os
+import tempfile
+
+# 模拟目标解压目录
+TARGET_DIR = os.path.expanduser(&quot;~/.deepface/weights&quot;)
+
+# 创建恶意zip文件
+malicious_zip_path = &quot;/tmp/malicious.zip&quot;
+
+# 构造路径遍历文件名
+# 利用 &#x27;../&#x27; 跳出目标目录
+malicious_files = [
+    # 写入到 /tmp/evil.txt
+    {&quot;name&quot;: &quot;../../tmp/evil.txt&quot;, &quot;content&quot;: b&quot;Malicious file content\n&quot;},
+    # 写入到 ~/evil_conf</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-9F7FAE97 - 不安全的文件解压</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> deepface/commons/weight_utils.py:71</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>bz2file = bz2.BZ2File(f&quot;{target_file}.bz2&quot;)
+data = bz2file.read()
+with open(target_file, &quot;wb&quot;) as f:
+    f.write(data)</code></pre>
+                <p><strong>数据流:</strong> 从外部下载的bz2文件被解压到本地文件系统</p>
+                <p><strong>判断理由:</strong> 未对解压后的数据大小进行限制，恶意构造的bz2文件可能导致zip炸弹攻击，消耗大量内存和磁盘空间。应添加解压大小限制</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 内存耗尽（OOM）使应用程序崩溃；2) 磁盘空间被恶意文件填满；3) 系统资源耗尽导致拒绝服务（DoS）；4) 可能影响同一主机上的其他服务。由于DeepFace通常作为Web服务运行，攻击可能导致整个服务不可用。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全的文件解压 - BZ2炸弹攻击
+漏洞ID: VULN-9F7FAE97
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import bz2
+import os
+import sys
+
+# ============================================
+# 第一部分：生成恶意BZ2文件（压缩炸弹）
+# ============================================
+
+def create_bz2_bomb(output_path: str, target_size_gb: int = 10) -&gt; str:
+    &quot;&quot;&quot;
+    生成一个BZ2压缩炸弹文件
+    
+    原理：利用BZ2压缩算法，构造高度可压缩的数据模式
+    使得解压后数据量远大于压缩包大小
+    
+    Args:
+        output_path: 输出文件路径
+        target_size</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-127C138E - 不安全的HTTP请求（SSRF潜在风险）</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> deepface/models/face_detection/Dlib.py:14</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>WEIGHTS_URL = &quot;http://dlib.net/files/shape_predictor_5_face_landmarks.dat.bz2&quot;</code></pre>
+                <p><strong>数据流:</strong> WEIGHTS_URL常量定义 -&gt; weight_utils.download_weights_if_necessary(source_url=WEIGHTS_URL) -&gt; 发起HTTP请求下载文件</p>
+                <p><strong>判断理由:</strong> 代码使用HTTP协议（而非HTTPS）从外部服务器下载权重文件。这存在中间人攻击风险，攻击者可能篡改下载的权重文件，导致加载恶意模型。虽然URL是硬编码的常量，但使用HTTP而非HTTPS使得下载过程缺乏完整性验证。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞的攻击者可以：1) 在目标机器上执行任意代码，完全控制系统；2) 窃取敏感数据（如人脸识别结果、用户信息等）；3) 植入后门或恶意软件；4) 横向移动攻击内网其他系统。由于DeepFace常用于安全敏感场景（如身份验证、监控系统），影响尤为严重。即使无法实现代码执行，攻击者也可以篡改模型导致人脸识别失效（拒绝服务）或产生错误结果（数据投毒）。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 中间人攻击篡改Dlib权重文件
+仅供研究使用 - 请勿用于非法用途
+&quot;&quot;&quot;
+
+import socket
+import threading
+import os
+import sys
+
+# 恶意权重文件内容（实际攻击中会替换为精心构造的payload）
+# 这里仅演示篡改行为，使用一个简单的文本文件模拟
+MALICIOUS_WEIGHT_DATA = b&quot;FAKE_WEIGHT_DATA_FOR_POC_ONLY&quot;
+
+def mitm_http_server(host=&#x27;0.0.0.0&#x27;, port=8080):
+    &quot;&quot;&quot;
+    模拟中间人HTTP服务器，拦截对dlib.net的请求并返回恶意数据
+    &quot;&quot;&quot;
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-EEA852B7 - 硬编码凭证/不安全的URL</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> deepface/models/facial_recognition/Dlib.py:16</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>WEIGHT_URL = &quot;http://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2&quot;</code></pre>
+                <p><strong>数据流:</strong> WEIGHT_URL 硬编码为HTTP URL，未使用HTTPS，可能被中间人攻击篡改下载的模型文件</p>
+                <p><strong>判断理由:</strong> 使用HTTP而非HTTPS下载模型权重文件，存在中间人攻击风险，攻击者可能替换模型文件导致恶意代码执行或模型中毒。虽然dlib.net是官方域名，但未加密传输仍存在安全风险。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞后，攻击者可以：1) 替换模型权重，导致人脸识别功能异常（如识别错误、绕过认证）；2) 如果模型加载过程存在缓冲区溢出等漏洞，可能实现远程代码执行；3) 模型中毒后，攻击者可以植入后门，使特定人脸被识别为授权用户；4) 由于模型文件是二进制数据，攻击者可以嵌入恶意代码，在模型加载时触发（取决于库的实现）。整体影响为中等，因为需要中间人攻击条件，但一旦成功，危害较大。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 中间人攻击模拟 - 替换Dlib模型权重文件
+仅供安全研究使用，请勿用于非法用途。
+&quot;&quot;&quot;
+
+import socket
+import threading
+import sys
+import os
+
+# 攻击者控制的恶意模型文件路径（模拟）
+MALICIOUS_MODEL_PATH = &quot;/tmp/malicious_model.dat.bz2&quot;
+
+# 目标HTTP服务器和端口（模拟dlib.net）
+TARGET_HOST = &quot;dlib.net&quot;
+TARGET_PORT = 80
+
+# 本地监听端口（攻击者ARP欺骗后，受害者请求重定向至此）
+LOCAL_PORT = 8080
+
+def create_malicious_model():
+    &quot;&quot;&quot;
+    生成一个模拟的恶意模型文件。
+    实际攻击中，攻击者会构造一个包含后门或恶意代码的模型。
+    这里仅生成一个标记文件用于演</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-7F6D4883 - 不安全的反序列化 (Pickle)</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> deepface/modules/recognition.py:735</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>representations = __load_representations(datastore_path=datastore_path, credentials=credentials)</code></pre>
+                <p><strong>数据流:</strong> 用户控制的db_path参数 → datastore_path = os.path.join(db_path, file_name) → __load_representations(datastore_path) → pickle.load()反序列化</p>
+                <p><strong>判断理由:</strong> 代码使用pickle加载序列化数据，pickle在反序列化时可能执行任意代码。虽然提供了credentials参数用于签名验证，但存在以下风险：1) credentials参数是可选的，如果用户不提供，则直接使用pickle.load()加载未经验证的数据；2) 即使使用credentials，如果私钥泄露或验证逻辑存在缺陷，攻击者仍可能构造恶意pickle文件；3) db_path由用户控制，攻击者可以指定包含恶意.pkl文件的路径。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在目标服务器上执行任意系统命令，实现远程代码执行（RCE）。攻击者可以：1) 窃取敏感数据（如数据库凭证、用户信息、模型文件）；2) 植入后门或恶意软件；3) 横向移动至内网其他系统；4) 完全控制服务器。由于 DeepFace 常用于人脸识别系统，攻击者还可能篡改识别结果、绕过身份验证。CVSS 3.1 评分预计为 9.8（Critical），因为攻击复杂度低、无需认证、影响机密性/完整性/可用性。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC: 不安全的反序列化 (Pickle) - DeepFace find() 函数
+漏洞ID: VULN-7F6D4883
+仅供安全研究使用，请勿用于非法用途。
+&quot;&quot;&quot;
+
+import os
+import pickle
+import subprocess
+import sys
+
+# ============================================================
+# 步骤1: 构造恶意 pickle 文件
+# 该文件在反序列化时会执行系统命令 (例如: 创建 /tmp/pwned 文件)
+# ============================================================
+
+def create_malicious_pickle(pkl_path: str, command: str):
+    &quot;&quot;&quot;
+    生</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-C67F3C3D - Cypher注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> deepface/modules/database/neo4j.py:80</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>index_query = f&quot;&quot;&quot;
+    CREATE VECTOR INDEX {node_label}_embedding_idx IF NOT EXISTS
+    FOR (d:{node_label})
+    ON (d.embedding)
+    OPTIONS {{
+        indexConfig: {{
+            `vector.dimensions`: {dimensions},
+            `vector.similarity_function`: &#x27;{similarity_function}&#x27;
+        }}
+    }};
+&quot;&quot;&quot;</code></pre>
+                <p><strong>数据流:</strong> 用户通过model_name, detector_backend, aligned, l2_normalized参数传入initialize_database方法 -&gt; __generate_node_label方法生成node_label -&gt; node_label直接拼接到Cypher查询字符串中 -&gt; session.execute_write执行查询</p>
+                <p><strong>判断理由:</strong> node_label由用户可控参数(model_name, detector_backend, aligned, l2_normalized)通过__generate_node_label方法生成，然后直接使用f-string拼接到Cypher查询中。攻击者可以通过控制这些参数注入恶意的Cypher语句，导致数据泄露、篡改或删除。这是典型的Cypher注入漏洞。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可能导致：1) 数据库结构破坏 - 通过注入恶意Cypher语句创建/删除索引或约束；2) 数据泄露 - 通过错误信息或注入的查询语句获取数据库中的敏感数据（如人脸哈希、嵌入向量等）；3) 数据篡改 - 通过注入的Cypher语句修改或删除数据库中的记录；4) 拒绝服务 - 通过注入破坏性查询导致数据库服务不可用。由于该漏洞位于数据库初始化阶段，影响范围覆盖所有后续的数据库操作。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+Cypher注入漏洞PoC - 仅供安全研究使用
+漏洞ID: VULN-C67F3C3D
+影响组件: DeepFace Neo4j数据库模块
+&quot;&quot;&quot;
+
+import requests
+import json
+
+# 目标API端点（假设DeepFace API运行在本地8080端口）
+BASE_URL = &quot;http://localhost:8080&quot;
+
+# ============ PoC 1: 基础注入验证 ============
+print(&quot;[*] PoC 1: 基础Cypher注入验证 - 仅供研究使用&quot;)
+print(&quot;=&quot;*60)
+
+# 通过注入特殊字符破坏查询结构
+# 在model_name参数中注入闭合括号和Cypher语句
+malicious_payload = {
+    &quot;model_name&quot;: &quot;VGG-Face) RETURN 1 AS result //</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-6AF8238D - Cypher注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> deepface/modules/database/neo4j.py:120</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>query = f&quot;&quot;&quot;
+UNWIND $rows AS r
+MERGE (n:{node_label} {{face_hash: r.face_hash, embedding_hash: r.embedding_hash}})
+ON CREATE SET
+  n.img_name = r.img_name,
+  n.embedding = r.embedding,
+  n.face = r.face,
+  n.model_name = r.model_name,
+  n.detector_backend = r.detector_backend,
+  n.aligned = r.aligned,
+  n.l2_normalized = r.l2_normalized
+RETURN count(*) AS processed
+&quot;&quot;&quot;</code></pre>
+                <p><strong>数据流:</strong> 用户通过embeddings参数传入insert_embeddings方法 -&gt; embeddings[0]中的model_name, detector_backend, aligned, l2_normalized参数 -&gt; __generate_node_label方法生成node_label -&gt; node_label直接拼接到Cypher查询字符串中 -&gt; session.execute_write执行查询</p>
+                <p><strong>判断理由:</strong> node_label由用户可控的embeddings数据中的参数生成，并直接拼接到Cypher查询中。攻击者可以通过构造恶意的model_name等参数注入Cypher语句，导致数据泄露或篡改。</p>
+                <p><strong>影响分析:</strong> 该Cypher注入漏洞允许攻击者执行任意Cypher语句，可能导致：1) 数据泄露：通过注入RETURN子句获取所有存储的人脸嵌入向量和元数据；2) 数据篡改：通过注入SET子句修改数据库中的嵌入向量，破坏人脸识别功能；3) 数据删除：通过注入DETACH DELETE子句删除所有节点和关系；4) 权限提升：如果Neo4j配置了权限控制，可能通过注入创建新用户或修改权限；5) 拒绝服务：通过注入复杂查询消耗数据库资源。由于该漏洞存在于核心数据库操作中，且影响initialize_database和insert_embeddings两个关键方法，危害等级为严重。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+Cypher注入漏洞PoC - 仅供安全研究使用
+&quot;&quot;&quot;
+
+import requests
+import json
+
+# ============================================
+# PoC 1: 通过API接口注入（假设API端点存在）
+# ============================================
+
+def poc_api_injection(target_url):
+    &quot;&quot;&quot;
+    通过API接口注入恶意Cypher语句
+    利用方式：在model_name参数中注入Cypher代码
+    &quot;&quot;&quot;
+    
+    # 恶意payload - 删除所有节点
+    malicious_payload = {
+        &quot;embeddings&quot;: [
+            {
+                </code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-12 03:42:39</p>
+</div>
+</body>
+</html>
