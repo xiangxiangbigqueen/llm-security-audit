@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - scrcpy</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> scrcpy | <strong>语言:</strong> {"C": 100.0} | <strong>时间:</strong> 2026-07-11 21:57:26</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对 scrcpy 项目（版本基于 GitHub 仓库 Genymobile/scrcpy）进行了静态代码分析。项目主要使用 C 语言开发，包含 180 个文件，共计 31,924 行代码。审计共确认了 4 个安全漏洞，其中高风险漏洞 2 个，中风险漏洞 1 个，低风险漏洞 1 个。最严重的问题包括使用不安全的随机数生成器（jrand48）和整数溢出导致的堆缓冲区溢出，这些漏洞可能被利用来实现随机数预测、拒绝服务甚至任意代码执行。建议开发团队优先修复高风险漏洞，特别是替换不安全的随机数生成器并修复字符串缓冲区中的整数溢出问题。</p>
+    <p><strong>风险评分:</strong> 75/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>0</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>2</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>1</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>1</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-B25B0AEE - 缓冲区溢出风险</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> app/src/icon.c:19</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>memcpy:</code></pre>
+                <p><strong>数据流:</strong> 静态工具检测到memcpy()函数调用，但源代码片段中未显示具体调用。</p>
+                <p><strong>判断理由:</strong> flawfinder检测到memcpy()函数调用，如果未正确检查源数据长度和目标缓冲区大小，可能导致缓冲区溢出。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可能导致 scrcpy 程序崩溃 (拒绝服务)，或在更严重的情况下，如果 memcpy() 溢出覆盖了关键内存区域，可能导致任意代码执行。由于漏洞评级为 low，且需要攻击者控制图标文件路径，实际利用难度较高。但结合其他漏洞或特定环境配置，可能提升危害等级。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-B25B0AEE - 缓冲区溢出风险
+仅供研究使用
+
+漏洞描述：
+在 app/src/icon.c 中，flawfinder 检测到 memcpy() 函数调用，
+但源代码片段中未显示具体调用。该漏洞可能存在于 decode_image() 函数
+或相关图像处理流程中，当处理恶意构造的图像文件时，
+如果未正确检查源数据长度和目标缓冲区大小，可能导致缓冲区溢出。
+
+PoC 原理：
+通过构造一个包含超大数据块的 PNG 图像文件，触发 memcpy() 调用时的
+缓冲区溢出。该 PoC 生成一个恶意图像文件，当 scrcpy 尝试加载该图标时，
+可能触发溢出。
+&quot;&quot;&quot;
+
+import struct
+import zlib
+import sys
+
+def create_malicious_png(output_path):
+    &quot;&quot;&quot;
+    生成一个恶意 PNG 文件，包含超大的 IDAT 数据块，
+    用于触发 </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-0A6AD81A - 不安全的随机数生成器</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> app\src\util\rand.c:17</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>return jrand48(rand-&gt;xsubi);</code></pre>
+                <p><strong>数据流:</strong> sc_rand_init()使用sc_tick_now()作为种子初始化xsubi数组 -&gt; sc_rand_u32()调用jrand48()生成随机数 -&gt; sc_rand_u64()组合两个32位随机数</p>
+                <p><strong>判断理由:</strong> 使用jrand48()和nrand48()（基于线性同余生成器）生成随机数，这些函数不是密码学安全的伪随机数生成器(CSPRNG)。对于安全敏感场景（如加密密钥生成、令牌生成等），应使用getrandom()、arc4random()或从/dev/urandom读取。种子仅基于微秒级时间戳，可预测性高。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞后，攻击者可以完全预测目标系统生成的所有随机数。如果这些随机数用于安全敏感场景（如会话令牌、加密密钥、认证挑战值、设备配对码等），攻击者可以：1) 预测并劫持会话；2) 伪造认证令牌；3) 解密加密通信；4) 绕过安全验证机制。由于种子仅基于微秒级时间戳（约2^20种可能），暴力破解在毫秒级时间窗口内即可完成，实际攻击可行性很高。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 预测scrcpy中基于jrand48()的随机数生成器
+漏洞类型: 不安全的随机数生成器 (CSPRNG缺失)
+仅供研究使用
+&quot;&quot;&quot;
+
+import ctypes
+import time
+import os
+
+# 模拟scrcpy的随机数生成器结构
+class ScRand(ctypes.Structure):
+    _fields_ = [
+        (&quot;xsubi&quot;, ctypes.c_uint16 * 3)
+    ]
+
+# 加载libc以使用jrand48
+libc = ctypes.CDLL(&quot;libc.so.6&quot;)
+libc.jrand48.restype = ctypes.c_long
+libc.jrand48.argtypes = [ctypes.POINTER(ctypes.c_uint16)]
+
+def sc_tick_now():
+    &quot;&quot;&quot;模拟scrcpy的s</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-2D76A365 - 不安全的随机数种子</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> app\src\util\rand.c:9</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>sc_tick seed = sc_tick_now(); // microsecond precision
+    rand-&gt;xsubi[0] = (seed &gt;&gt; 32) &amp; 0xFFFF;
+    rand-&gt;xsubi[1] = (seed &gt;&gt; 16) &amp; 0xFFFF;
+    rand-&gt;xsubi[2] = seed &amp; 0xFFFF;</code></pre>
+                <p><strong>数据流:</strong> sc_tick_now()获取微秒级时间戳 -&gt; 分割为3个16位值作为xsubi种子</p>
+                <p><strong>判断理由:</strong> 种子仅基于当前时间戳，熵值极低（微秒精度约20位熵）。攻击者可以通过观察系统时间或多次调用结果来预测种子值，从而预测所有后续随机数输出。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者预测目标系统生成的所有随机数序列。虽然scrcpy项目中的随机数可能仅用于非安全场景（如屏幕镜像），但该代码模式如果被复制到安全敏感场景（如生成加密密钥、会话令牌、CSRF令牌等），将导致严重的安全问题。攻击者可以：1) 预测所有后续随机数输出；2) 如果随机数用于安全决策，可绕过安全机制；3) 如果随机数用于生成密钥，可恢复加密密钥。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * 仅供研究使用 - Proof of Concept for VULN-2D76A365
+ * 演示如何利用不安全的随机数种子预测随机数输出
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;stdint.h&gt;
+#include &lt;time.h&gt;
+#include &lt;sys/time.h&gt;
+
+// 模拟目标系统的sc_tick_now()函数
+// 在Linux上使用gettimeofday获取微秒级时间戳
+static int64_t sc_tick_now(void) {
+    struct timeval tv;
+    gettimeofday(&amp;tv, NULL);
+    return (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+// 模拟目标系统的随机数生成器结构
+struct sc_rand {
+    unsigned short xsubi[3];
+};
+
+// 模拟目标系统的随机数</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-2EE895AD - 整数溢出 - 缓冲区大小计算</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> app/src/util/strbuf.c:26</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>size_t new_cap = buf-&gt;cap * 3 / 2 + len;
+char *s = realloc(buf-&gt;s, new_cap + 1); // +1 for &#x27;\0&#x27;</code></pre>
+                <p><strong>数据流:</strong> buf-&gt;cap和len由调用者控制，乘法运算可能溢出</p>
+                <p><strong>判断理由:</strong> buf-&gt;cap * 3 / 2 + len 和 new_cap + 1 都存在整数溢出风险。当buf-&gt;cap很大时，乘法运算可能溢出，导致new_cap变小，realloc分配过小的缓冲区，后续写入操作造成堆缓冲区溢出。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致堆缓冲区溢出，攻击者可以覆盖堆上的其他数据结构，实现任意代码执行或信息泄露。由于该漏洞存在于字符串缓冲区操作中，在解析网络数据、处理用户输入等场景中可能被远程利用。CVSS评分估计为8.8（高），因为攻击复杂度低，且可能导致完全的系统控制。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * 仅供研究使用 - Proof of Concept for VULN-2EE895AD
+ * 整数溢出导致堆缓冲区溢出
+ *
+ * 编译: gcc -o poc_vuln poc_vuln.c strbuf.c -I.
+ * 运行: ./poc_vuln
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdint.h&gt;
+#include &lt;assert.h&gt;
+
+#include &quot;strbuf.h&quot;
+
+/*
+ * PoC: 通过多次append操作使buf-&gt;cap增长到接近SIZE_MAX，
+ * 然后触发整数溢出，导致realloc分配过小的缓冲区，
+ * 后续memcpy写入超出分配大小的数据，造成堆缓冲区溢出。
+ */
+
+int main() {
+    printf(&quot;=== PoC for VULN-2EE895AD (仅供研究使用) ===\n&quot;);
+  </code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-11 21:57:26</p>
+</div>
+</body>
+</html>

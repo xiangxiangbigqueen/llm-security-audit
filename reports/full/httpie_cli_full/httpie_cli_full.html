@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - cli</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> cli | <strong>语言:</strong> {"Python": 100.0} | <strong>时间:</strong> 2026-07-11 20:08:16</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对HTTPie CLI项目（https://github.com/httpie/cli）进行了代码审查，共发现2个安全漏洞。其中1个为高危漏洞（SSL证书验证禁用），1个为中危漏洞（请求缺少超时设置）。高危漏洞允许攻击者通过中间人攻击完全绕过HTTPS安全保护，可能导致恶意更新注入或敏感信息泄露。中危漏洞可能导致进程阻塞和资源耗尽。建议立即修复高危漏洞，并尽快处理中危漏洞。</p>
+    <p><strong>风险评分:</strong> 75/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>0</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>1</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>1</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>0</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-92D9C8AA - SSL证书验证禁用</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> httpie/internal/update_warnings.py:44</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>response = requests.get(PACKAGE_INDEX_LINK, verify=False)</code></pre>
+                <p><strong>数据流:</strong> 硬编码的URL常量PACKAGE_INDEX_LINK -&gt; requests.get()调用时设置verify=False</p>
+                <p><strong>判断理由:</strong> requests.get()调用时显式设置verify=False禁用了SSL证书验证，这使得中间人攻击成为可能。攻击者可以拦截HTTPS请求并返回恶意响应，例如提供虚假的版本更新信息或恶意payload。虽然PACKAGE_INDEX_LINK是硬编码的常量，但禁用证书验证仍然破坏了HTTPS的安全保证。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过中间人攻击完全绕过HTTPS的安全保护。由于verify=False被显式设置，requests库不会验证服务器证书的有效性，攻击者可以使用任何自签名证书或无效证书成功建立连接。攻击者可以：1) 返回虚假的版本更新信息，诱导用户下载恶意更新包；2) 返回恶意JSON数据，可能触发其他漏洞；3) 收集HTTPie的使用信息（如用户IP、系统信息等）。虽然更新检查是辅助功能，但它在每次HTTPie运行时都可能被触发，攻击面较大。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: HTTPie SSL证书验证禁用漏洞利用
+漏洞ID: VULN-92D9C8AA
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import socket
+import ssl
+import threading
+import json
+import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# 配置参数
+TARGET_HOST = &#x27;packages.httpie.io&#x27;  # 目标域名
+TARGET_PORT = 443
+LOCAL_IP = &#x27;0.0.0.0&#x27;  # 攻击者IP
+LOCAL_PORT = 8443  # 本地监听端口
+
+# 恶意响应内容
+MALICIOUS_RESPONSE = {
+    &quot;stable&quot;: &quot;999.99.99&quot;,  # 虚假的版本号
+    &quot;beta&quot;: </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-C911141A - 请求缺少超时设置</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> httpie/internal/update_warnings.py:44</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>response = requests.get(PACKAGE_INDEX_LINK, verify=False)</code></pre>
+                <p><strong>数据流:</strong> requests.get()调用未设置timeout参数</p>
+                <p><strong>判断理由:</strong> requests.get()调用没有设置timeout参数，这可能导致请求无限期阻塞。如果目标服务器响应缓慢或不可达，HTTPie进程可能会被挂起，导致资源耗尽或拒绝服务。在更新检查场景中，这可能会阻塞主进程或后台进程的执行。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过模拟慢响应服务器来阻塞HTTPie进程。在同步模式下，主进程会被无限期阻塞，导致：1) HTTPie命令无法正常执行和退出；2) 如果HTTPie被集成到脚本或自动化流程中，可能导致整个流程卡住；3) 多个被阻塞的HTTPie进程可能导致系统资源耗尽。虽然后台执行模式（lazy=True）可以缓解阻塞问题，但同步路径仍然存在风险。此外，verify=False关闭了SSL验证，增加了中间人攻击的风险，攻击者可以注入恶意响应。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: HTTPie 更新检查请求缺少超时设置漏洞利用
+漏洞ID: VULN-C911141A
+
+仅供安全研究使用！
+
+该PoC演示了如何利用requests.get()缺少timeout参数的问题，
+通过模拟慢响应服务器来阻塞HTTPie进程。
+&quot;&quot;&quot;
+
+import socket
+import threading
+import time
+import subprocess
+import sys
+
+# 配置
+LISTEN_HOST = &#x27;0.0.0.0&#x27;
+LISTEN_PORT = 8888
+
+class SlowResponseServer:
+    &quot;&quot;&quot;模拟一个响应缓慢的服务器，用于触发超时漏洞&quot;&quot;&quot;
+    
+    def __init__(self, host: str, port: int, delay: int = 300):
+        self.host = host</code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-11 20:08:16</p>
+</div>
+</body>
+</html>

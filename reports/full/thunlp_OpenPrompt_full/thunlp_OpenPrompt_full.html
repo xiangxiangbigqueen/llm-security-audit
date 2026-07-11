@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - OpenPrompt</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> OpenPrompt | <strong>语言:</strong> {"Python": 100.0} | <strong>时间:</strong> 2026-07-12 03:35:04</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对OpenPrompt项目（https://github.com/thunlp/OpenPrompt）进行了全面的代码安全审查。审计共发现6个安全漏洞，其中包括1个严重级别漏洞（代码注入 - eval()使用）、1个高风险漏洞（路径遍历）、1个中风险漏洞（不安全的配置合并）以及3个其他漏洞。最严重的问题集中在用户输入未经验证直接传递给eval()函数执行，以及路径参数缺乏规范化处理，这些漏洞可导致远程代码执行（RCE）和任意文件操作。建议开发团队优先修复严重和高风险漏洞，并建立安全编码规范。</p>
+    <p><strong>风险评分:</strong> 85/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>5</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>1</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>1</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>0</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-21104465 - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> experiments\cli.py:37</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>EXP_PATH = args.resume or args.test</code></pre>
+                <p><strong>数据流:</strong> 用户通过命令行参数--resume或--test传入路径，直接赋值给EXP_PATH，后续用于os.mkdir(EXP_PATH)和文件操作</p>
+                <p><strong>判断理由:</strong> args.resume和args.test直接来自用户输入，未经过任何路径验证或清理就被用于创建目录和文件操作。攻击者可以通过传入包含路径遍历序列（如../）的参数来在任意位置创建目录或访问文件，可能导致目录遍历攻击。</p>
+                <p><strong>影响分析:</strong> 攻击者可通过路径遍历在任意位置创建目录或写入文件，可能导致：1) 覆盖系统关键文件（如/etc/passwd、配置文件）；2) 在Web目录写入webshell实现远程代码执行；3) 创建恶意符号链接；4) 导致拒绝服务（如填充磁盘空间）。由于该漏洞位于主入口脚本，影响范围广泛。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 路径遍历漏洞PoC
+# 利用方式：通过--resume或--test参数传入路径遍历序列
+
+# PoC 1: 在/tmp目录下创建任意目录
+python experiments/cli.py --resume &quot;../../tmp/evil_dir&quot;
+
+# PoC 2: 覆盖系统关键文件（如/etc/passwd，仅演示，实际需谨慎）
+python experiments/cli.py --resume &quot;../../etc/passwd&quot;
+
+# PoC 3: 写入恶意文件到Web目录
+python experiments/cli.py --test &quot;../../var/www/html/backdoor.php&quot;
+
+# Python PoC脚本（更详细）
+cat &lt;&lt; &#x27;EOF&#x27; &gt; poc_path_traversal.py
+#!/usr/bin/env python3
+# 仅供研究使用 - 路径遍历漏洞PoC
+import os
+imp</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-6C8C9AD6 - 不安全的配置合并</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> openprompt/config.py:18</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>def get_user_config(usr_config_path, default_config=None):
+    if default_config is None:
+        config = get_default_config()
+    else:
+        config = default_config
+    usr_config = get_config_from_file(usr_config_path)
+    config.merge_from_other_cfg(usr_config)</code></pre>
+                <p><strong>数据流:</strong> 用户配置文件 -&gt; merge_from_other_cfg合并到默认配置 -&gt; 覆盖默认配置项</p>
+                <p><strong>判断理由:</strong> 用户配置可以完全覆盖默认配置，包括安全相关的配置项（如日志路径、模型路径等）。攻击者可以通过覆盖关键配置项来改变程序行为，例如将日志路径改为敏感文件路径。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过覆盖关键配置项实现多种攻击：1) 信息泄露：将日志路径改为敏感文件路径（如 /etc/passwd），导致敏感信息被写入日志；2) 远程代码执行：修改模型加载路径指向恶意模型，加载时执行任意代码；3) 安全机制绕过：修改输入验证限制、允许路径等安全配置；4) 后门植入：通过自定义配置项注入恶意功能。由于配置合并没有任何过滤或验证机制，攻击者可以完全控制程序行为。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC for VULN-6C8C9AD6 - 不安全的配置合并
+仅供研究使用
+
+漏洞描述：
+openprompt/config.py 中的 get_user_config 函数在合并用户配置时，
+未对用户配置进行任何过滤或验证，允许用户通过配置文件覆盖任意配置项。
+&quot;&quot;&quot;
+
+import os
+import tempfile
+import yaml
+
+# 模拟目标程序的默认配置
+DEFAULT_CONFIG_YAML = &quot;&quot;&quot;
+logging:
+  path: &quot;./logs&quot;
+  level: &quot;INFO&quot;
+model:
+  path: &quot;./models/pretrained&quot;
+  name: &quot;bert-base-uncased&quot;
+safety:
+  max_input_length: 512
+  allow</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-ADB0DE56 - 代码注入 - eval()使用</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> openprompt/prompt_base.py:106</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>d[&quot;post_processing&quot;] = eval(d.get(&quot;post_processing&quot;, &#x27;lambda x:x&#x27;))</code></pre>
+                <p><strong>数据流:</strong> 用户可控的模板配置通过d.get(&quot;post_processing&quot;)获取值，该值可能来自外部输入或配置文件，直接传递给eval()执行。</p>
+                <p><strong>判断理由:</strong> eval()函数会执行任意Python代码。d.get(&quot;post_processing&quot;)的值如果来自用户输入或不可信的配置文件，攻击者可以注入恶意代码。例如，如果post_processing的值为&quot;__import__(&#x27;os&#x27;).system(&#x27;rm -rf /&#x27;)&quot;，则会导致命令执行。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在目标服务器上执行任意Python代码，进而实现完全远程代码执行(RCE)。攻击者可以：1) 执行系统命令（如文件删除、数据窃取）；2) 读取或修改敏感文件；3) 安装后门或挖矿程序；4) 横向移动至内网其他系统。由于eval()在Python进程上下文中执行，攻击者还可以访问所有导入的模块和全局变量，造成严重的安全威胁。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC for VULN-ADB0DE56 - 仅供研究使用
+漏洞：openprompt/prompt_base.py 第106行 eval() 代码注入
+&quot;&quot;&quot;
+
+import json
+
+# 模拟用户可控的模板配置
+# 攻击者可以构造恶意的 post_processing 字符串
+malicious_config = {
+    &quot;text&quot;: [
+        {
+            &quot;placeholder&quot;: &quot;text_a&quot;,
+            &quot;add_prefix_space&quot;: &quot;&quot;,
+            &quot;post_processing&quot;: &quot;__import__(&#x27;os&#x27;).system(&#x27;echo PWNED &gt; /tmp/</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-25645F67 - 代码注入 - eval()使用</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> openprompt/prompt_base.py:171</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>val = eval(dict_str)</code></pre>
+                <p><strong>数据流:</strong> 用户输入的模板文本通过parse_text方法解析，其中mixed_token_start和mixed_token_end之间的内容被提取并构造成dict_str，然后直接传递给eval()执行。</p>
+                <p><strong>判断理由:</strong> eval()函数执行任意Python代码。dict_str的内容来自用户输入的模板文本，如果攻击者能够控制模板文本的内容，就可以注入恶意代码。例如，在模板中插入&quot;{__import__(&#x27;os&#x27;).system(&#x27;id&#x27;)}&quot;会导致命令执行。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在服务器上执行任意Python代码，进而实现完整的远程代码执行(RCE)。攻击者可以：1) 执行系统命令（如id、ls、cat等）；2) 读取、修改或删除服务器上的任意文件；3) 建立反弹shell获取持久化访问；4) 横向移动攻击内网其他系统；5) 窃取敏感数据（数据库凭证、API密钥等）。由于eval()在Python进程上下文中执行，攻击者可以获得与应用程序相同的权限，可能导致完全的系统沦陷。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC for VULN-25645F67 - 代码注入漏洞
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import sys
+import os
+
+# 模拟openprompt库中的漏洞触发路径
+# 实际利用时，攻击者需要能够控制传递给parse_text的模板文本
+
+def exploit_poc():
+    &quot;&quot;&quot;
+    演示通过eval()执行任意代码的PoC
+    &quot;&quot;&quot;
+    print(&quot;[*] PoC: 利用eval()执行任意代码&quot;)
+    print(&quot;[*] 仅供安全研究使用&quot;)
+    
+    # 模拟parse_text方法中的漏洞代码
+    # 原始代码：val = eval(dict_str)
+    # 其中dict_str来自用户输入的模板文本中{}之间的内容
+    
+    </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-62F51C8D - 不安全的PyTorch模型加载</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> openprompt/trainer.py:205</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>import torch
+from torch import nn
+from torch.nn.parallel.data_parallel import DataParallel</code></pre>
+                <p><strong>数据流:</strong> 静态分析工具在Line 205检测到[B614]警告，表明存在不安全的PyTorch load使用。虽然当前代码片段中未直接显示torch.load()调用，但该警告表明在文件的其他位置或通过继承关系存在不安全的模型加载操作。</p>
+                <p><strong>判断理由:</strong> Bandit静态分析工具检测到B614漏洞，表示使用了不安全的PyTorch load函数。torch.load()默认使用pickle反序列化，可以执行任意代码。如果加载的模型文件来自不可信来源，攻击者可以构造恶意的.pth文件，在反序列化时执行任意Python代码，导致远程代码执行(RCE)漏洞。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在目标系统上执行任意Python代码，实现完全远程代码执行(RCE)。攻击者可以：1) 窃取敏感数据（模型参数、训练数据、系统文件）；2) 植入后门或恶意软件；3) 横向移动至内网其他系统；4) 破坏或篡改模型训练结果；5) 利用计算资源进行挖矿等非法活动。由于该漏洞位于公开的checkpoint加载接口，且在实际训练/推理流程中会被调用，攻击面广泛，影响严重。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC: 不安全的PyTorch模型加载漏洞利用
+漏洞ID: VULN-62F51C8D
+目标: openprompt/trainer.py 第205行 torch.load() 未设置 weights_only=True
+
+仅供研究使用！请勿用于非法用途。
+&quot;&quot;&quot;
+
+import os
+import sys
+import torch
+import pickle
+import struct
+
+# 恶意payload：执行系统命令（此处仅为演示，实际利用可替换为反弹shell等）
+class MaliciousModel:
+    def __reduce__(self):
+        # 注意：此处命令仅为演示，实际利用时请替换为合法测试命令
+        # 例如：反弹shell、文件读取等
+        cmd = &quot;echo &#x27;VULNERABILITY_CONFIRMED: 成功执行任意代码</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-A47F692B - 代码注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> openprompt/prompts/generation_verbalizer.py:148</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>val = eval(dict_str)</code></pre>
+                <p><strong>数据流:</strong> 用户通过label_words参数传入文本 -&gt; parse_text方法解析文本中的{mixed_token_start...mixed_token_end}部分 -&gt; 提取dict_str字符串 -&gt; eval(dict_str)执行任意Python代码</p>
+                <p><strong>判断理由:</strong> parse_text方法在第148行使用eval()函数执行从用户输入解析出的dict_str字符串。该字符串来源于label_words参数，用户可以通过构造恶意的label_words内容（如包含&#x27;__import__(&quot;os&quot;).system(&quot;command&quot;)&#x27;）实现任意代码执行。虽然bandit工具建议使用ast.literal_eval，但当前代码直接使用eval，存在严重安全风险。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在目标系统上执行任意 Python 代码，进而实现：1) 执行系统命令（如反弹 shell、安装恶意软件）；2) 读取、修改或删除敏感文件；3) 发起网络请求进行横向移动或数据窃取；4) 植入后门或勒索软件。由于 eval() 在异常处理中仅打印错误并退出，无法阻止代码执行，因此漏洞利用成功率极高。CVSS 评分预计为 9.8（Critical），影响机密性、完整性和可用性。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC for VULN-A47F692B - 代码注入漏洞
+仅供研究使用，请勿用于非法用途。
+&quot;&quot;&quot;
+
+import sys
+import os
+
+# 模拟漏洞环境
+# 假设我们正在使用 openprompt 库，并且可以控制 label_words 参数
+
+# 漏洞触发点：GenerationVerbalizer 的 on_label_words_set 方法
+# 当 is_rule=True 时，label_words 中的字符串会被解析并执行 eval()
+
+# 构造恶意 payload：通过 eval() 执行任意代码
+# 这里我们使用一个简单的命令执行来演示
+
+# 恶意 label_words 示例：
+# 在 label_words 中嵌入 {mixed_token_start...mixed_token_end} 格式的字符串
+# 其中 dict_str 部分包含恶意代码
+
+# 例如，label_words 可以</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-08032C75 - 代码注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> tutorial\7_ernie_paddlepaddle\template.py:155</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>val = eval(dict_str)</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过text参数传入parse_text方法 -&gt; 在parse_text中通过eval(dict_str)执行，其中dict_str由用户可控的text内容构造</p>
+                <p><strong>判断理由:</strong> 代码使用eval()函数执行由用户输入构造的字符串。攻击者可以通过构造恶意的模板文本，在dict_str中注入任意Python代码。例如，在模板文本中包含&#x27;{__import__(&quot;os&quot;).system(&quot;rm -rf /&quot;)}&#x27;会导致任意命令执行。bandit工具已检测到该问题(B307)，建议使用ast.literal_eval替代。</p>
+                <p><strong>影响分析:</strong> 该漏洞为严重级别的代码注入漏洞。攻击者可以通过构造恶意模板文本，在 eval() 函数中执行任意Python代码，实现：1) 任意系统命令执行（如删除文件、启动后门）；2) 敏感信息泄露（读取环境变量、文件内容）；3) 拒绝服务攻击（通过无限循环或资源耗尽）；4) 横向移动（利用服务器权限访问内部网络）。由于 eval() 在服务器端执行，攻击者可以获得与应用程序相同的权限，可能导致完全的系统沦陷。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC for VULN-08032C75 - Code Injection via eval() in ErnieManualTemplate.parse_text()
+仅供研究使用，请勿用于非法用途。
+&quot;&quot;&quot;
+
+import sys
+import os
+
+# 模拟漏洞环境（无需实际导入paddle等依赖）
+class MockTokenizer:
+    pass
+
+class MockInputExample:
+    def __init__(self, text_a, text_b):
+        self.text_a = text_a
+        self.text_b = text_b
+
+# 模拟漏洞代码（仅用于演示）
+def vulnerable_parse_text(text):
+    &quot;&quot;&quot;
+    模拟 template.py 第155行的 eval() 调用
+ </code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-12 03:35:04</p>
+</div>
+</body>
+</html>

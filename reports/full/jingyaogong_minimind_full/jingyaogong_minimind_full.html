@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - minimind</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> minimind | <strong>语言:</strong> {"Python": 100.0} | <strong>时间:</strong> 2026-07-12 03:31:46</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对开源项目 minimind（https://github.com/jingyaogong/minimind）进行，该项目是一个基于 Python 的轻量级语言模型实现。审计共发现 7 个安全漏洞，其中 4 个为严重（Critical）级别，2 个为高危（High）级别，1 个为中危（Medium）级别。最突出的安全问题集中在不安全的反序列化，特别是通过 torch.load() 和 pickle.load() 加载模型权重文件时，攻击者可以构造恶意 .pth 文件实现远程代码执行（RCE）。此外，还存在 Hugging Face 模型加载未固定版本、错误信息泄露等风险。建议立即修复所有严重和高危漏洞，特别是对用户可控的文件路径进行严格校验，并采用安全的序列化方案替代 pickle。</p>
+    <p><strong>风险评分:</strong> 92/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>5</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>5</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>2</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>2</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-EEF365A8 - 不安全的反序列化</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> eval_llm.py:23</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>model.load_state_dict(torch.load(ckp, map_location=args.device), strict=True)</code></pre>
+                <p><strong>数据流:</strong> 用户通过命令行参数 --save_dir 和 --weight 控制文件路径 ckp，该路径拼接后传入 torch.load() 进行反序列化</p>
+                <p><strong>判断理由:</strong> torch.load() 默认使用 pickle 反序列化，可以执行任意代码。攻击者可以通过控制 --save_dir 或 --weight 参数指向恶意构造的 .pth 文件，导致远程代码执行。</p>
+                <p><strong>影响分析:</strong> 攻击者可以实现远程代码执行（RCE），完全控制目标系统。具体影响包括：窃取敏感数据（模型权重、训练数据、系统文件）、植入后门、横向移动、破坏系统完整性。由于该漏洞在模型加载阶段触发，攻击者可以在模型推理前获得控制权，绕过后续所有安全机制。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC for VULN-EEF365A8 - Unsafe Deserialization via torch.load()
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import os
+import sys
+import pickle
+import struct
+import torch
+
+# ============================================================
+# 步骤1: 构造恶意.pth文件（利用pickle反序列化执行任意代码）
+# ============================================================
+
+def create_malicious_pth(output_path, command):
+    &quot;&quot;&quot;
+    构造一个恶意的.pth文件，当被torch.load()加</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-F38CF974 - 不安全的反序列化</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> eval_llm.py:26</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>load_lora(model, f&#x27;./{args.save_dir}/{args.lora_weight}_{args.hidden_size}.pth&#x27;)</code></pre>
+                <p><strong>数据流:</strong> 用户通过命令行参数 --save_dir、--lora_weight 和 --hidden_size 控制文件路径，该路径传入 load_lora() 函数（可能内部使用 torch.load 或 pickle.load）</p>
+                <p><strong>判断理由:</strong> 如果 load_lora() 内部使用 torch.load() 或 pickle.load() 加载 .pth 文件，则存在与第23行相同的反序列化漏洞。攻击者可通过控制参数加载恶意文件。</p>
+                <p><strong>影响分析:</strong> 攻击者可以实现远程代码执行（RCE），完全控制目标系统。具体影响包括：1) 执行任意系统命令；2) 窃取敏感数据（如模型权重、训练数据、用户信息）；3) 植入后门或恶意软件；4) 横向移动攻击内网其他系统；5) 破坏模型推理服务，导致拒绝服务。由于该漏洞位于生产推理脚本中，且无需特殊权限即可触发，风险等级为严重（Critical）。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC: 不安全的反序列化漏洞利用
+漏洞ID: VULN-F38CF974
+文件: eval_llm.py 第26行
+
+⚠️ 仅供安全研究使用 ⚠️
+
+漏洞描述：
+用户通过命令行参数 --save_dir、--lora_weight 和 --hidden_size 完全控制传递给 load_lora() 的文件路径。
+load_lora() 内部使用 torch.load() 或 pickle.load() 加载 .pth 文件，
+攻击者可以构造恶意的 .pth 文件实现远程代码执行。
+&quot;&quot;&quot;
+
+import os
+import sys
+import pickle
+import torch
+import subprocess
+
+# ============================================================
+# 第一步：构造恶意 .pth 文件
+# =================</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-65ECED6F - 不安全的PyTorch模型加载</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> model/model_lora.py:36</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>state_dict = torch.load(path, map_location=model.device)</code></pre>
+                <p><strong>数据流:</strong> 用户提供的路径参数&#x27;path&#x27;直接传递给torch.load()，未经过任何验证或清理。攻击者可以构造恶意的.pth文件，包含任意Python代码，在加载时执行。</p>
+                <p><strong>判断理由:</strong> torch.load()默认使用pickle反序列化，可以执行任意代码。攻击者如果能够控制path参数（例如通过文件上传或路径遍历），可以加载恶意模型文件，导致远程代码执行。这是典型的反序列化漏洞，CVSS评分可达9.8。</p>
+                <p><strong>影响分析:</strong> 这是一个严重级别的远程代码执行漏洞。攻击者通过构造恶意的.pth文件，利用torch.load()默认使用pickle反序列化的特性，可以在目标服务器上执行任意系统命令或Python代码。成功利用后，攻击者可以完全控制目标系统，包括：窃取敏感数据、安装后门、横向移动、破坏系统完整性等。由于该漏洞位于核心功能模块(model/model_lora.py)且被多个函数调用(load_lora, merge_lora)，攻击面广泛。CVSS评分9.8（Critical）。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC: 不安全的PyTorch模型加载漏洞利用
+漏洞ID: VULN-65ECED6F
+文件: model/model_lora.py, 第36行
+
+⚠️ 仅供安全研究使用 ⚠️
+&quot;&quot;&quot;
+
+import torch
+import os
+import sys
+import pickle
+import struct
+
+# ============================================
+# 第一部分：生成恶意模型文件 (malicious.pth)
+# ============================================
+
+def create_malicious_pth(output_path=&quot;malicious.pth&quot;):
+    &quot;&quot;&quot;
+    生成一个包含恶意代码的 .pth 文件
+    当 torch.load() 加载</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-D205FE96 - 不安全的Hugging Face模型加载</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> scripts/eval_toolcall.py:65</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)</code></pre>
+                <p><strong>数据流:</strong> args.load_from由用户通过命令行参数控制，直接传入from_pretrained()且trust_remote_code=True</p>
+                <p><strong>判断理由:</strong> AutoModelForCausalLM.from_pretrained()未指定revision参数，且设置了trust_remote_code=True。这允许从Hub下载并执行任意代码，结合未固定的版本，风险极高。bandit工具已标记此行为B615。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者实现远程代码执行(RCE)，影响严重。攻击者可以：1) 执行任意系统命令，完全控制受害者机器；2) 窃取环境变量中的敏感信息（如API密钥、令牌、数据库密码等）；3) 读取、修改或删除文件系统中的任意文件；4) 植入持久化后门，实现长期控制；5) 利用受害者机器作为跳板进行内网横向移动；6) 窃取训练数据或模型权重等知识产权。由于该脚本是评估脚本，在实际使用场景中可能被频繁执行，攻击面较大。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全的Hugging Face模型加载漏洞利用
+漏洞ID: VULN-D205FE96
+文件: scripts/eval_toolcall.py 第65行
+
+仅供安全研究使用 - 请勿用于非法用途
+&quot;&quot;&quot;
+
+import os
+import sys
+import json
+import argparse
+import tempfile
+import shutil
+from pathlib import Path
+
+# ============================================================
+# 步骤1: 创建恶意Hugging Face模型仓库结构
+# ============================================================
+
+def create_malicious_model_repo(repo_dir: str, payload_code: str):
+    </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-085FE454 - 不安全的Hugging Face模型下载 - 未固定版本</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> scripts/serve_openai_api.py:45</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)</code></pre>
+                <p><strong>数据流:</strong> 用户通过args.load_from参数指定模型来源 -&gt; from_pretrained下载模型</p>
+                <p><strong>判断理由:</strong> from_pretrained()未指定revision参数且设置了trust_remote_code=True，会下载并执行模型仓库中的自定义代码。攻击者可以通过控制模型仓库或中间人攻击来执行任意代码。</p>
+                <p><strong>影响分析:</strong> 严重程度: 高。攻击者可以实现远程代码执行(RCE)，完全控制受害者机器。由于代码在模型加载阶段执行，具有高隐蔽性，难以被常规安全工具检测。攻击者可以执行任意Python代码，包括系统命令执行、文件读写、网络通信等，可能导致数据泄露、后门植入、横向移动等严重后果。利用难度低，只需创建恶意模型仓库并诱使受害者加载即可。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全的Hugging Face模型下载 - 未固定版本
+漏洞ID: VULN-085FE454
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import os
+import sys
+import json
+import tempfile
+import shutil
+import requests
+from huggingface_hub import HfApi, create_repo, upload_file
+
+# ============================================================
+# 攻击者准备恶意模型仓库
+# ============================================================
+
+def create_malicious_model_repo(repo_name: str, token: str):
+    &quot;&quot;&quot;
+ </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-285D31B0 - 不安全的异常处理 - 错误信息泄露</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> scripts/serve_openai_api.py:143</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>except Exception as e:
+    queue.put({&quot;error&quot;: str(e)})
+    queue.put(None)</code></pre>
+                <p><strong>数据流:</strong> 模型生成过程中的异常 -&gt; 错误信息直接返回给用户</p>
+                <p><strong>判断理由:</strong> 异常信息直接包含在返回给用户的响应中，可能泄露系统内部信息，如文件路径、模型结构等敏感信息。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过构造特殊请求触发模型处理异常，从而获取系统内部信息。可能泄露的信息包括：服务器文件路径（如模型加载路径、配置文件路径）、模型结构信息（如层数、隐藏层大小）、硬件信息（如CUDA设备信息、内存状态）、Python堆栈跟踪信息。虽然严重性较低，但这些信息可能被用于进一步的攻击，如路径遍历、配置攻击等。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC - 仅供研究使用
+漏洞: 不安全的异常处理 - 错误信息泄露
+目标: scripts/serve_openai_api.py 第143行
+&quot;&quot;&quot;
+
+import requests
+import json
+
+# 配置目标API地址
+TARGET_URL = &quot;http://localhost:8000/v1/chat/completions&quot;  # 根据实际部署地址修改
+
+def exploit_error_leakage():
+    &quot;&quot;&quot;
+    利用方式1: 通过构造特殊输入触发模型处理异常
+    预期效果: 返回的错误信息中包含系统内部路径、模型结构等敏感信息
+    &quot;&quot;&quot;
+    
+    # 构造一个可能触发异常的请求
+    # 例如: 发送超长文本、特殊字符、或格式错误的请求
+    payload = {
+      </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-B873AC09 - 不安全的异常处理 - 错误信息泄露</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> scripts/serve_openai_api.py:179</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>except Exception as e:
+    yield json.dumps({&quot;error&quot;: str(e)})</code></pre>
+                <p><strong>数据流:</strong> 生成过程中的异常 -&gt; 错误信息直接返回给用户</p>
+                <p><strong>判断理由:</strong> 异常信息直接包含在返回给用户的响应中，可能泄露系统内部信息。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过发送特定构造的请求，获取系统内部错误信息。泄露的信息可能包括：模型文件路径、内存使用情况、tokenizer内部错误、Python堆栈信息、系统配置细节等。这些信息虽然单独危害较低，但可能被攻击者用于：1) 了解系统架构和依赖组件；2) 发现其他潜在漏洞；3) 进行更精准的社会工程学攻击。在多层安全防护中，信息泄露往往是更严重攻击的前奏。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC - 仅供研究使用
+漏洞: 不安全的异常处理 - 错误信息泄露
+目标: scripts/serve_openai_api.py 第179行
+&quot;&quot;&quot;
+
+import requests
+import json
+import sys
+
+# 配置目标服务器
+TARGET_URL = &quot;http://localhost:8000/chat/completions&quot;  # 根据实际情况修改
+
+def exploit_error_leakage():
+    &quot;&quot;&quot;
+    利用异常信息泄露漏洞
+    通过发送可能触发异常的输入，获取系统内部错误信息
+    &quot;&quot;&quot;
+    
+    # 测试用例1: 超长输入触发tokenizer异常
+    payload_overflow = {
+        &quot;model&quot;: &quot;m</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-95F14A38 - 代码注入 - eval()执行用户输入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> scripts/web_demo.py:128</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>def execute_tool(tool_name, args):
+    import datetime
+    try:
+        if tool_name == &#x27;calculate_math&#x27;:
+            return {&quot;result&quot;: eval(args.get(&#x27;expression&#x27;, &#x27;0&#x27;))}</code></pre>
+                <p><strong>数据流:</strong> 用户通过工具调用接口传入&#x27;calculate_math&#x27;工具名称和&#x27;expression&#x27;参数 -&gt; args.get(&#x27;expression&#x27;)获取用户输入的数学表达式 -&gt; eval()直接执行该表达式，可执行任意Python代码</p>
+                <p><strong>判断理由:</strong> eval()函数会执行传入的任意字符串作为Python代码。攻击者可以通过构造恶意的&#x27;expression&#x27;参数（如&#x27;__import__(&quot;os&quot;).system(&quot;rm -rf /&quot;)&#x27;）实现远程代码执行。bandit工具已检测到B307警告，但严重性被低估。</p>
+                <p><strong>影响分析:</strong> 攻击者可通过eval()注入执行任意Python代码，实现远程代码执行(RCE)。可导致：1) 服务器完全沦陷，攻击者获得系统控制权；2) 敏感数据泄露（数据库、配置文件、用户信息）；3) 植入后门或勒索软件；4) 横向移动攻击内网其他系统；5) 破坏系统完整性，造成服务中断。由于eval()在Python Web应用中极为危险，且该漏洞位于生产环境代码中，影响范围广泛。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC代码 - 仅供安全研究使用
+漏洞：VULN-95F14A38 - eval()执行用户输入导致的代码注入
+&quot;&quot;&quot;
+
+import requests
+import json
+
+# 目标URL（假设Web服务运行在本地8000端口）
+TARGET_URL = &quot;http://localhost:8000/execute_tool&quot;
+
+# 攻击载荷：通过eval()执行系统命令
+# 注意：以下payload仅用于演示，不会实际执行破坏性操作
+payloads = [
+    # 1. 信息收集 - 获取当前目录文件列表
+    {
+        &quot;tool_name&quot;: &quot;calculate_math&quot;,
+        &quot;args&quot;: {
+            &quot;expression&quot;: &quot;__import__(</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-1127A4FA - 不安全的HTTP请求（SSRF风险）</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> trainer/rollout_engine.py:107</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>self.http = requests</code></pre>
+                <p><strong>数据流:</strong> base_url参数由用户控制，在rollout方法中通过self.http.post(f&quot;{self.base_url}/generate&quot;, ...)发起请求。攻击者可以控制base_url指向内部服务或恶意端点。</p>
+                <p><strong>判断理由:</strong> SGLangRolloutEngine的base_url参数未经过任何校验或白名单过滤，直接用于构造HTTP请求。攻击者可能利用此漏洞发起SSRF攻击，访问内部网络资源或进行端口扫描。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此 SSRF 漏洞访问内部网络资源，包括但不限于：1) 探测内网开放端口和服务；2) 访问云服务商元数据 API 获取临时凭证；3) 攻击内部不安全的 Web 服务；4) 绕过网络隔离访问受限资源。由于该代码位于核心训练逻辑中，在实际训练流程中会被调用，影响范围较大。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+SGLangRolloutEngine SSRF 漏洞概念验证代码
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import requests
+import sys
+
+# ============================================
+# PoC 1: 基础 SSRF 探测 - 访问内部服务
+# ============================================
+def poc_ssrf_basic():
+    &quot;&quot;&quot;
+    利用方式：将 base_url 指向内部服务，探测内网资源
+    预期效果：如果内部服务存在，将收到响应
+    &quot;&quot;&quot;
+    print(&quot;[*] PoC 1: 基础 SSRF 探测&quot;)
+    print(&quot;[*] 模拟攻击者控制 base_url 参数&</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-908589E6 - 代码注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> trainer/train_agent.py:58</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>&quot;calculate_math&quot;: lambda args: {&quot;result&quot;: str(eval(str(args.get(&quot;expression&quot;, &quot;0&quot;)).replace(&quot;^&quot;, &quot;**&quot;).replace(&quot;×&quot;, &quot;*&quot;).replace(&quot;÷&quot;, &quot;/&quot;).replace(&quot;−&quot;, &quot;-&quot;).replace(&quot;（&quot;, &quot;(&quot;).replace(&quot;）&quot;, &quot;)&quot;), {&quot;__builtins__&quot;: {}, &quot;math&quot;: math}))}</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过parse_tool_calls解析JSON后，expression参数直接传入eval()执行，攻击者可构造恶意表达式如__import__(&#x27;os&#x27;).system(&#x27;rm -rf /&#x27;)绕过受限的__builtins__</p>
+                <p><strong>判断理由:</strong> eval()在受限命名空间中执行用户输入，但math模块仍可被利用，例如通过math.__class__.__mro__获取object类，进而访问os等危险模块。静态工具已标记B307不安全函数使用。</p>
+                <p><strong>影响分析:</strong> 该漏洞为严重级别的代码注入漏洞，攻击者可以通过构造特殊的expression参数实现Python沙箱逃逸，最终获得任意代码执行能力。具体影响包括：1) 完全控制目标服务器，执行任意系统命令；2) 读取、修改或删除服务器上的敏感文件；3) 横向移动，攻击内网其他系统；4) 植入后门或挖矿程序；5) 窃取数据库凭证、API密钥等敏感信息。由于该漏洞位于AI训练框架中，攻击者还可能污染训练数据或模型，造成更深远的安全影响。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC代码 - 仅供安全研究使用
+漏洞ID: VULN-908589E6
+漏洞类型: 代码注入 (eval()沙箱逃逸)
+&quot;&quot;&quot;
+
+import json
+import math
+
+# ============================================================
+# 模拟目标环境中的受限eval调用
+# 注意：此代码仅用于演示漏洞利用路径，请勿用于非法用途
+# ============================================================
+
+def vulnerable_calculate_math(expression: str) -&gt; str:
+    &quot;&quot;&quot;
+    模拟目标代码中的漏洞函数
+    对应 trainer/train_agent.py 第58行的 lambda 函数
+    &quot</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-16A66E65 - 命令注入</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> trainer/train_agent.py:58</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>&quot;calculate_math&quot;: lambda args: {&quot;result&quot;: str(eval(str(args.get(&quot;expression&quot;, &quot;0&quot;)).replace(&quot;^&quot;, &quot;**&quot;).replace(&quot;×&quot;, &quot;*&quot;).replace(&quot;÷&quot;, &quot;/&quot;).replace(&quot;−&quot;, &quot;-&quot;).replace(&quot;（&quot;, &quot;(&quot;).replace(&quot;）&quot;, &quot;)&quot;), {&quot;__builtins__&quot;: {}, &quot;math&quot;: math}))}</code></pre>
+                <p><strong>数据流:</strong> 用户输入通过parse_tool_calls解析JSON后，expression参数直接传入eval()执行，攻击者可构造恶意表达式如__import__(&#x27;os&#x27;).system(&#x27;rm -rf /&#x27;)绕过受限的__builtins__</p>
+                <p><strong>判断理由:</strong> eval()在受限命名空间中执行用户输入，但math模块仍可被利用，例如通过math.__class__.__mro__获取object类，进而访问os等危险模块。静态工具已标记B307不安全函数使用。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在目标服务器上执行任意系统命令，可导致：1) 服务器完全沦陷，攻击者可获取root权限；2) 敏感数据泄露，包括数据库凭证、API密钥、用户数据等；3) 横向移动，攻击者可利用被攻陷的服务器攻击内部网络；4) 持久化后门，攻击者可在服务器上安装恶意软件；5) 拒绝服务，攻击者可执行rm -rf /等破坏性命令。由于该代码位于生产环境的工具定义中，影响范围包括所有使用该工具的AI Agent服务。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC for VULN-16A66E65 - 命令注入漏洞
+漏洞位置: trainer/train_agent.py:58
+漏洞类型: eval()命令注入
+
+仅供研究使用 - 请勿用于非法用途
+&quot;&quot;&quot;
+
+import math
+import json
+
+# ============================================================
+# 漏洞复现：通过受限eval()中的math模块进行沙箱逃逸
+# ============================================================
+
+# 模拟原始漏洞代码中的lambda函数
+# 注意：原始代码中eval()的globals参数为 {&#x27;__builtins__&#x27;: {}, &#x27;math&#x27;: math}
+# 这意味着__builtins__被清空，但math</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-0CE5C559 - 路径遍历</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> trainer/train_lora.py:63</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>lora_save_path = f&#x27;{args.save_dir}/{args.lora_name}_{lm_config.hidden_size}{moe_suffix}.pth&#x27;</code></pre>
+                <p><strong>数据流:</strong> 用户通过命令行参数 --save_dir 和 --lora_name 控制文件路径，直接用于文件写入操作</p>
+                <p><strong>判断理由:</strong> args.save_dir 和 args.lora_name 来自用户输入，未经过任何路径校验或过滤，直接用于构造文件保存路径。攻击者可以通过设置包含路径遍历字符（如 ../）的 lora_name 或 save_dir 参数，将文件写入到任意目录，可能导致任意文件写入或覆盖</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此路径遍历漏洞将任意LoRA权重文件写入系统任意位置。具体影响包括：1) 覆盖系统关键文件（如/etc/passwd、配置文件等）导致服务崩溃或权限提升；2) 将恶意文件写入Web目录（如/var/www/html）实现远程代码执行；3) 写入启动脚本或定时任务目录实现持久化；4) 覆盖其他用户的文件造成数据破坏。由于LoRA权重文件是二进制格式，攻击者可以构造包含恶意载荷的权重文件，在加载时触发任意代码执行。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 路径遍历漏洞PoC
+# 漏洞文件: trainer/train_lora.py 第63行
+# 漏洞描述: args.save_dir 和 args.lora_name 未经过滤直接拼接为文件路径
+
+# PoC 1: 通过 lora_name 参数进行路径遍历，写入任意目录
+# 目标: 将恶意文件写入 /tmp/evil_lora.pth
+echo &quot;=== PoC 1: 通过 lora_name 参数路径遍历 ===&quot;
+python trainer/train_lora.py \
+    --save_dir /tmp \
+    --lora_name &quot;../../tmp/evil_lora&quot; \
+    --epochs 1 \
+    --batch_size 1 \
+    --log_interval 1000 \
+    --save_interval 1 \
+    --hidden_size 768 \
+    --num_hidden_layers 1 \
+    --max_se</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-6AA97590 - 不安全的PyTorch模型加载</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> trainer/train_ppo.py:373</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>静态工具发现: [bandit] Line 373: [B614] Use of unsafe PyTorch load</code></pre>
+                <p><strong>数据流:</strong> 虽然当前代码片段未直接显示torch.load调用，但bandit工具在line 373检测到不安全的PyTorch加载操作，可能涉及pickle反序列化，用户输入或外部文件可能被加载到模型中，导致任意代码执行。</p>
+                <p><strong>判断理由:</strong> PyTorch的torch.load()默认使用pickle模块进行反序列化，pickle在加载恶意构造的数据时可以执行任意Python代码。如果加载的模型文件来自不可信来源（如用户上传、网络下载），则存在严重的安全风险。bandit工具已标记此问题，建议使用weights_only=True参数或使用安全序列化格式。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者在目标系统上执行任意Python代码，具有以下潜在影响：
+1. 完全控制目标系统：攻击者可以执行任意系统命令，包括安装恶意软件、创建后门账户等
+2. 数据泄露：攻击者可以窃取训练数据、模型参数、用户数据等敏感信息
+3. 模型投毒：攻击者可以修改模型参数，植入后门或降低模型性能
+4. 横向移动：被攻陷的系统可能被用作跳板攻击内部网络其他系统
+5. 持久化：攻击者可以建立持久化访问机制，长期控制目标系统
+
+CVSS评分估计：8.8 (High) - 攻击复杂度低，无需认证，可远程触发</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 不安全的PyTorch模型加载 - 通过pickle反序列化实现任意代码执行
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import os
+import sys
+import torch
+import argparse
+import pickle
+import struct
+
+# ============================================================
+# 第一部分：构造恶意模型文件（.pth）
+# 该文件利用pickle反序列化执行任意命令
+# ============================================================
+
+def create_malicious_checkpoint(output_path, command=&quot;calc.exe&quot;):
+    &quot;&quot;&quot;
+    构造一个恶意的PyTorch检查点文件
+ </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-ABB29BDF - 不安全的文件操作</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> trainer/train_pretrain.py:62</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>ckp = f&#x27;{args.save_dir}/{args.save_weight}_{lm_config.hidden_size}{moe_suffix}.pth&#x27;</code></pre>
+                <p><strong>数据流:</strong> 用户通过--save_dir和--save_weight参数控制文件保存路径</p>
+                <p><strong>判断理由:</strong> save_dir和save_weight参数直接拼接为文件路径，未进行任何路径合法性校验。攻击者可通过设置save_dir为&#x27;../etc/&#x27;或save_weight包含&#x27;../../&#x27;等路径遍历字符，将模型权重文件写入任意目录，可能导致文件覆盖或权限提升。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此漏洞将模型权重文件写入任意目录，实现：1) 覆盖系统关键文件（如/etc/passwd、/etc/shadow）导致系统崩溃或权限提升；2) 覆盖用户配置文件（如~/.ssh/authorized_keys）实现SSH免密登录；3) 在Web目录写入恶意文件实现远程代码执行；4) 覆盖应用程序配置文件导致服务异常。由于torch.save()保存的是序列化的Python对象，攻击者还可以通过构造恶意的模型权重实现反序列化攻击。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+&quot;&quot;&quot;
+PoC for VULN-ABB29BDF - 不安全的文件操作
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import os
+import sys
+import argparse
+import torch
+
+# ============================================
+# PoC 1: 路径遍历攻击 - 覆盖系统关键文件
+# ============================================
+print(&quot;[*] PoC 1: 路径遍历攻击 - 覆盖系统关键文件&quot;)
+print(&quot;[*] 仅供安全研究使用&quot;)
+print()
+
+# 模拟攻击者控制的参数
+class Args:
+    pass
+
+args = Args()
+args.save_dir = &quot;../etc/&quot;  # 尝试写入/etc目录
+arg</code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-12 03:31:46</p>
+</div>
+</body>
+</html>

